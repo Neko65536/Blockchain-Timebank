@@ -1,0 +1,675 @@
+<template>
+    <div class="pageBox">
+        <el-dialog :visible.sync="dialogVisible" title="填写服务评分" :append-to-body="true" :modal-append-to-body="false">
+            <div style="display: flex;flex-direction: column;
+                justify-content: center;align-items: center;">
+                <h3>请为该用户的服务进行评分</h3>
+                <el-rate v-model="value1" :colors="colors">
+                </el-rate>
+                <el-button type="primary" @click="dialogVisible = false" style="margin-top: 20px;">确 定</el-button>
+            </div>
+        </el-dialog>
+        <img :src="$activityImagePath" class="image">
+        <div class="content">
+            <div>
+                {{ form.title }}
+            </div>
+            <el-divider content-position="center">报名截止</el-divider>
+            <div v-if="deadline" style="width: 100%; display: inline-block; margin-bottom: 10px;">
+                <el-statistic format="DD天HH小时mm分钟ss秒" :value="deadline" time-indices>
+                </el-statistic>
+            </div>
+        </div>
+        <div class="content">
+            <el-form ref="form" :model="form" label-width="100px" style="width: 100%;">
+                <el-form-item label="活动标题">
+                    <el-input v-model="form.title" prefix-icon="el-icon-edit"></el-input>
+                </el-form-item>
+                <el-form-item label="活动名额">
+                    <el-input v-model="form.quota" prefix-icon="el-icon-user"></el-input>
+                </el-form-item>
+                <el-form-item label="剩余名额">
+                    <el-input v-model="form.remain" readonly prefix-icon="el-icon-sell"></el-input>
+                </el-form-item>
+                <el-form-item label="报名截止时间">
+                    <div class="block">
+                        <el-date-picker v-model="form.deadline" type="datetime" placeholder="选择日期时间" align="right"
+                            :picker-options="pickerOptionsofform">
+                        </el-date-picker>
+                    </div>
+                </el-form-item>
+                <el-form-item label="活动日期">
+                    <el-input :value="formatActivityDates(form)" readonly prefix-icon="el-icon-date"></el-input>
+                </el-form-item>
+                <el-form-item label="活动开始时间">
+                    <el-input v-model="form.begin" prefix-icon="el-icon-time"></el-input>
+                </el-form-item>
+                <el-form-item label="活动结束时间">
+                    <el-input v-model="form.end" prefix-icon="el-icon-time"></el-input>
+                </el-form-item>
+                <el-form-item label="活动地址">
+                    <el-input v-model="form.address" prefix-icon="el-icon-location"></el-input>
+                </el-form-item>
+                <el-form-item label="发布人电话">
+                    <el-input v-model="form.phone" prefix-icon="el-icon-phone"></el-input>
+                </el-form-item>
+                <el-form-item label="活动描述">
+                    <el-input type="textarea" v-model="form.description"></el-input>
+                </el-form-item>
+                <el-form-item label="服务类型">
+                    <el-input :value="formatServiceTypeLabel(form.serviceType)" readonly prefix-icon="el-icon-collection-tag"></el-input>
+                </el-form-item>
+                <el-form-item v-for="item in parsedExtraItems" :key="item.key" :label="item.label">
+                    <el-input :value="item.value" readonly></el-input>
+                </el-form-item>
+                <el-form-item label="每人答谢">
+                    <el-input :value="String(form.volunteerReward ?? 0)" readonly prefix-icon="el-icon-money">
+                        <template slot="append">时间币/人（链上）</template>
+                    </el-input>
+                </el-form-item>
+                <el-alert
+                    v-if="Number(form.volunteerReward || 0) <= 0"
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    title="当前活动答谢为 0：点击「服务完成」只会更新记录，不会让志愿者链上余额增加。"
+                    style="width: 100%; margin-bottom: 12px;"
+                />
+                <el-alert
+                    v-else
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    title="答谢大于 0 时：点「标记完成」会要求区块链可用，并从发布老人链上余额划转到该志愿者。"
+                    style="width: 100%; margin-bottom: 12px;"
+                />
+                <el-form-item label="活动状态">
+                    <el-input v-model="statusLabel" readonly prefix-icon="el-icon-info"></el-input>
+                </el-form-item>
+            </el-form>
+        </div>
+        <div>
+            <el-button @click="handleCancel" style="margin-right: 20px;">取 消</el-button>
+            <el-button type="primary" @click="onSubmitForm">提交修改</el-button>
+        </div>
+        <el-divider content-position="center">活动报名情况</el-divider>
+        <div v-if="tableData.length > 0" class="volunteer-summary">
+            <div class="summary-stats">
+                <span>共 {{ tableData.length }} 人报名</span>
+                <span>待完成 {{ pendingVolunteers.length }} 人</span>
+                <span v-if="signedInCount > 0">已签到 {{ signedInCount }} 人</span>
+            </div>
+            <el-button
+                v-if="canBatchComplete"
+                type="warning"
+                round
+                class="batch-thank-btn"
+                :loading="batchLoading"
+                @click="batchThankAll"
+            >
+                <i class="el-icon-present"></i>
+                {{ batchButtonLabel }}
+            </el-button>
+            <el-alert
+                v-if="isActivityEnded && pendingVolunteers.length > 0 && Number(form.volunteerReward || 0) > 0"
+                type="success"
+                :closable="false"
+                show-icon
+                :title="`活动结束后可一键答谢：${pendingVolunteers.length} 人 × ${form.volunteerReward} 时间币 = 合计 ${batchRewardTotal} 时间币`"
+                style="margin-top: 10px;"
+            />
+        </div>
+        <div class="activity">
+            <ul class="infinite-list" v-infinite-scroll="load" infinite-scroll-disabled="busy"
+                infinite-scroll-distance="5" style="overflow:auto;padding-inline-start:0px">
+                <div v-for="(row, index) in tableData" :key="index">
+                    <el-card :body-style="{ padding: '0px' }" shadow="always">
+                        <div class="cardContent">
+                            <img :src="require('@/assets/common/header1.jpg')" class="image">
+                            <div class="contentBox">
+                                <div style="font-size: 17px; font-weight: 600;">
+                                    {{ row.name }}
+                                    <el-tag v-if="Number(row.sign) === 1" type="success" size="mini" style="margin-left: 6px;">已签到</el-tag>
+                                    <el-tag v-else type="info" size="mini" style="margin-left: 6px;">未签到</el-tag>
+                                    <el-tag v-if="!isVolunteerIncomplete(row)" type="success" size="small" style="margin-left: 8px;">
+                                        已完成
+                                    </el-tag>
+                                    <el-tag v-else type="info" size="small" style="margin-left: 8px;">
+                                        待完成
+                                    </el-tag>
+                                </div>
+                                <div style="font-size: 12px;">{{ row.phone }}</div>
+                                <div style="font-size: 12px;">{{ row.email }}</div>
+                                <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+                                    <span v-if="row.rewardPaid === 1">
+                                        <el-icon class="el-icon-success" style="color: #67c23a; margin-right: 4px;"></el-icon>
+                                        答谢已支付
+                                    </span>
+                                    <span v-else-if="Number(form.volunteerReward || 0) > 0 && !isVolunteerIncomplete(row)">
+                                        <el-icon class="el-icon-circle-check" style="color: #409eff; margin-right: 4px;"></el-icon>
+                                        答谢待转账
+                                    </span>
+                                    <span v-else-if="Number(form.volunteerReward || 0) > 0">
+                                        <el-icon class="el-icon-time" style="color: #909399; margin-right: 4px;"></el-icon>
+                                        待标记并支付 {{ form.volunteerReward }} 时间币
+                                    </span>
+                                    <span v-else>
+                                        <el-icon class="el-icon-info" style="color: #909399; margin-right: 4px;"></el-icon>
+                                        无答谢
+                                    </span>
+                                </div>
+                                <div style="display: flex;justify-content: center;align-items: center; margin-top: 8px;">
+                                    <el-button v-if="!isActivityEnded" round size="mini" disabled
+                                        style="margin-top: 5px;width: 90%;">活动尚未结束</el-button>
+                                    <el-button v-else-if="isVolunteerIncomplete(row)" type="success" round
+                                        size="mini" @click="editUser(row.id)" :loading="loadingIds.has(row.id)" :disabled="loadingIds.has(row.id)"
+                                        style="margin-top: 5px;width: 90%;">
+                                        <i class="el-icon-check" style="margin-right: 4px;"></i>
+                                        {{ loadingIds.has(row.id) ? '处理中...' : '标记完成' }}
+                                    </el-button>
+                                    <el-button v-else-if="Number(row.rewardPaid) === 1" round size="mini" disabled
+                                        style="margin-top: 5px;width: 90%;">已完成答谢</el-button>
+                                    <el-button v-else round size="mini" type="danger" plain
+                                        style="margin-top: 5px;width: 90%;" :loading="loadingIds.has(row.id)" :disabled="loadingIds.has(row.id)"
+                                        @click="editUser1(row.id)">
+                                        <i class="el-icon-refresh-left" style="margin-right: 4px;"></i>
+                                        {{ loadingIds.has(row.id) ? '处理中...' : '撤回完成' }}
+                                    </el-button>
+                                </div>
+                            </div>
+                        </div>
+                    </el-card>
+                </div>
+            </ul>
+        </div>
+    </div>
+</template>
+
+<script>
+import request from '@/utils/request';
+
+export default {
+    name: 'IdActivityOld',
+    data() {
+        return {
+            // 弹窗
+            dialogVisible: false,
+            value1: null,
+            colors: ['#99A9BF', '#F7BA2A', '#FF9900'],
+            form: {},
+            id: null,
+            pageSize1: 1,
+            currentPage1: 1,
+            deadline: '',
+            isEndSign: false,
+            batchLoading: false,
+            // 防止重复点击
+            loadingIds: new Set(),
+            // 选择器
+            options: [
+                { value: 0, label: '待扣费' },
+                { value: 1, label: '待审核' },
+                { value: 2, label: '审核通过' },
+                { value: 3, label: '进行中' },
+                { value: 4, label: '拒绝进行' },
+                { value: 5, label: '活动过期' },
+            ],
+            pickerOptionsofform: {
+                shortcuts: [{
+                    text: '今天',
+                    onClick(picker) {
+                        picker.$emit('pick', new Date());
+                    }
+                }, {
+                    text: '昨天',
+                    onClick(picker) {
+                        const date = new Date();
+                        date.setTime(date.getTime() - 3600 * 1000 * 24);
+                        picker.$emit('pick', date);
+                    }
+                }, {
+                    text: '一周前',
+                    onClick(picker) {
+                        const date = new Date();
+                        date.setTime(date.getTime() - 3600 * 1000 * 24 * 7);
+                        picker.$emit('pick', date);
+                    }
+                }]
+            },
+            // 卡片
+            originalData: [],
+            pageSize: 100, // 志愿者名单一次拉全，便于批量答谢统计
+            totalItems: 0, // 总条目数量
+            currentPage: 1, // 当前页码
+            tableData: [], // 表格数据
+            // 无限滚动
+            busy: false,
+        };
+    },
+    created() {
+        // 从查询参数中获取数据
+        this.id = parseInt(this.$route.query.id);
+        this.search();
+        this.search1();
+        this.getIsEndSign();
+    },
+    activated() {
+        this.search1();
+    },
+    computed: {
+        statusLabel() {
+            const selectedOption = this.options.find(option => option.value === this.form.status);
+            return selectedOption ? selectedOption.label : '未知状态';
+        },
+        parsedExtraItems() {
+            const extra = this.parseExtraJson(this.form.extraJson);
+            const labels = {
+                hospitalAddress: '医院地址',
+                department: '科室',
+                appointmentTime: '预约时间',
+                healthTaskType: '健康任务类型',
+                frequency: '服务频次',
+                cleaningScope: '清洁范围',
+                homeArea: '房屋面积',
+                destination: '目的地',
+                budgetRange: '预算范围',
+                visitType: '就诊类型',
+                registrationNeeded: '是否需要协助挂号',
+                shoppingList: '代购清单',
+                maxBudget: '最高预算',
+                customCategory: '自定义服务类别',
+                serviceDetails: '服务详情',
+            };
+            return Object.keys(extra).map((key) => {
+                let value = extra[key];
+                if (typeof value === 'boolean') {
+                    value = value ? '是' : '否';
+                }
+                return {
+                    key,
+                    label: labels[key] || key,
+                    value: value == null || value === '' ? '-' : String(value),
+                };
+            });
+        },
+        isActivityEnded() {
+            if (!this.form.date || !this.form.end) return false;
+            const end = new Date(`${this.form.date}T${this.form.end}`);
+            return !Number.isNaN(end.getTime()) && end.getTime() <= Date.now();
+        },
+        pendingVolunteers() {
+            return (this.tableData || []).filter((row) => this.isVolunteerIncomplete(row));
+        },
+        signedInCount() {
+            return (this.tableData || []).filter((row) => Number(row.sign) === 1).length;
+        },
+        batchRewardTotal() {
+            const reward = Number(this.form.volunteerReward || 0);
+            return reward * this.pendingVolunteers.length;
+        },
+        canBatchComplete() {
+            return this.isActivityEnded && this.pendingVolunteers.length > 0 && !this.batchLoading;
+        },
+        batchButtonLabel() {
+            const count = this.pendingVolunteers.length;
+            const reward = Number(this.form.volunteerReward || 0);
+            if (reward > 0) {
+                return `一键答谢（${count} 人 · 合计 ${this.batchRewardTotal} 时间币）`;
+            }
+            return `一键标记完成（${count} 人）`;
+        },
+    },
+    methods: {
+        formatServiceTypeLabel(serviceType) {
+            const map = {
+                medical_rehab: '医疗康复',
+                health_manage: '健康管理',
+                cleaning: '清洁整理',
+                shopping_companion: '购物陪同',
+                clinic_companion: '问诊陪护',
+                purchase: '物品代购',
+                other_service: '其他服务',
+            };
+            return map[serviceType] || map.other_service;
+        },
+        parseExtraJson(extraJson) {
+            if (!extraJson) return {};
+            try {
+                const parsed = typeof extraJson === 'string' ? JSON.parse(extraJson) : extraJson;
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return parsed;
+                }
+            } catch (error) {
+                // Ignore malformed legacy extraJson
+            }
+            return {};
+        },
+        formatActivityDates(activity) {
+            const message = activity && activity.message ? String(activity.message) : '';
+            if (message) {
+                try {
+                    const parsed = JSON.parse(message);
+                    if (parsed && Array.isArray(parsed.dates) && parsed.dates.length > 0) {
+                        return parsed.dates
+                            .map(item => String(item).split('-').pop())
+                            .map(day => `${parseInt(day, 10)}号`)
+                            .join(',');
+                    }
+                } catch (error) {
+                    // Ignore malformed legacy message
+                }
+            }
+            if (!activity || !activity.date) return '日期待定';
+            const day = String(activity.date).split('-').pop();
+            return `${parseInt(day, 10)}号`;
+        },
+        load() {
+            if (this.tableData.length >= this.totalItems) {
+
+                return;
+            }
+            if (this.busy) return;
+            this.busy = true;
+
+            // 调用你的search方法来获取新的数据
+            this.search().then(() => {
+                this.currentPage++;
+                this.busy = false;
+            });
+        },
+        calculateDeadline() {
+            if (this.form.deadline) {
+                this.deadline = new Date(this.form.deadline);
+            }
+        },
+        getIsEndSign() {
+            const now = new Date();
+            if (!this.form.date || !this.form.begin) {
+                this.isEndSign = false;
+                return;
+            }
+            try {
+                const activityDate = new Date(this.form.date);
+                const [hours, minutes] = String(this.form.begin).split(':');
+                activityDate.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+                this.isEndSign = activityDate.getTime() <= now.getTime();
+            } catch (e) {
+                console.error('解析活动时间失败:', e);
+                this.isEndSign = false;
+            }
+        },
+        batchThankAll() {
+            const count = this.pendingVolunteers.length;
+            const reward = Number(this.form.volunteerReward || 0);
+            const confirmText = reward > 0
+                ? `将为 ${count} 名志愿者各支付 ${reward} 时间币，合计 ${this.batchRewardTotal} 时间币，并从您的链上余额划转。是否确认？`
+                : `将把 ${count} 名志愿者标记为服务完成（本活动无时间币答谢）。是否确认？`;
+
+            this.$confirm(confirmText, reward > 0 ? '一键答谢' : '一键标记完成', {
+                confirmButtonText: '确认',
+                cancelButtonText: '取消',
+                type: 'warning',
+            }).then(() => {
+                this.batchLoading = true;
+                request.put('/users/old/status/batch', { id: this.id }, { timeout: 180000 })
+                    .then((response) => {
+                        if (response.code === 1 && response.data) {
+                            const d = response.data;
+                            let msg = `成功处理 ${d.successCount} 人`;
+                            if (d.acceptedCount > 0) msg += `，${d.acceptedCount} 人已受理，稍后在时间币页面查看结算结果`;
+                            if (d.skipCount > 0) msg += `，${d.skipCount} 人已完成已跳过`;
+                            if (d.failCount > 0) msg += `，${d.failCount} 人失败`;
+                            if (d.failCount > 0) {
+                                this.$message.warning(msg);
+                                const detail = (d.failures || [])
+                                    .map((f) => `${f.name || f.userId}: ${f.reason}`)
+                                    .join('；');
+                                if (detail) {
+                                    this.$alert(detail, '部分志愿者答谢失败', { type: 'warning' });
+                                }
+                            } else {
+                                this.$message.success(msg);
+                            }
+                            this.search1();
+                        } else {
+                            this.$message.error(response.msg || '批量操作失败');
+                        }
+                    })
+                    .catch((error) => {
+                        console.error('批量答谢失败:', error);
+                        this.$message.error('未收到完整处理结果，请刷新名单核查已完成项，再恢复未完成答谢');
+                    })
+                    .finally(() => {
+                        this.batchLoading = false;
+                    });
+            }).catch(() => {});
+        },
+        /** 后端可能返回 number / string / null */
+        isVolunteerIncomplete(row) {
+            const s = row && row.status;
+            return s == null || Number(s) === 0;
+        },
+        async search() {
+            try {
+                // 创建 URLSearchParams 对象
+                const params = new URLSearchParams();
+                // 添加搜索条件到 URLSearchParams 对象中
+                params.append('pageSize', this.pageSize1);
+                params.append('page', this.currentPage1);
+                params.append('id', this.id);
+                // 将 URLSearchParams 对象转换为查询字符串
+                const queryString = params.toString();
+
+                // 发起请求时将查询字符串添加到URL中
+                const response = await request.get(`users/volold/activity?${queryString}`);
+                if (response.code === 1) {
+                    this.form = response.data;
+                    this.calculateDeadline();
+                    this.getIsEndSign();
+                } else {
+                    this.$message.error(response.msg);
+                }
+            } catch (error) {
+                console.error('获取数据失败:', error);
+            }
+        },
+        search1() {
+            return new Promise((resolve, reject) => {
+                // 创建 URLSearchParams 对象
+                const params = new URLSearchParams();
+                // 添加搜索条件到 URLSearchParams 对象中
+                params.append('pageSize', this.pageSize);
+                params.append('page', this.currentPage);
+                params.append('id', this.id);
+                // 将 URLSearchParams 对象转换为查询字符串
+                const queryString = params.toString();
+                // 发起请求时将查询字符串添加到URL中
+                request.get(`/users/old/status?${queryString}`)
+                    .then(response => {
+                        if (response.code === 1) {
+                            this.totalItems = response.data.total;
+                            this.originalData = response.data.rows;
+                            // 替换而非追加，避免数据叠加
+                            this.tableData = this.originalData;
+                            this.calculateDeadline();
+                            this.getIsEndSign();
+                            // 将新的数据作为Promise的结果返回
+                            resolve(this.tableData);
+                        } else {
+                            this.$message.error(response.msg);
+                            reject(response.msg);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取数据失败:', error);
+                    });
+            });
+        },
+        editUser(id) {
+            if (this.loadingIds.has(id)) return;
+            this.loadingIds.add(id);
+            let data = {
+                userId: id,
+                activityId: this.id,
+                status: 1,
+            };
+            request.put(`/users/old/status`, data, { timeout: Number(process.env.VUE_APP_CHAIN_REQUEST_TIMEOUT_MS || 90000) })
+                .then(response => {
+                    if (response.code === 1) {
+                        this.$message.success(response.data && response.data.state === 'SUCCEEDED'
+                          ? '该用户已完成服务' : '答谢已受理，请在时间币页面查看结算结果，稍后刷新名单');
+                        this.search1();
+                        this.dialogVisible = true;
+                    } else {
+                        this.$message.error(response.msg);
+                    }
+                })
+                .catch(error => {
+                    console.error('There was a problem with the request:', error);
+                    this.$message.error(error.response?.data?.message || '操作失败，请检查网络或联系管理员');
+                })
+                .finally(() => {
+                    this.loadingIds.delete(id);
+                });
+        },
+        editUser1(id) {
+            if (this.loadingIds.has(id)) return;
+            this.loadingIds.add(id);
+            let data = {
+                userId: id,
+                activityId: this.id,
+                status: 0,
+            };
+            request.put(`/users/old/status`, data, { timeout: Number(process.env.VUE_APP_CHAIN_REQUEST_TIMEOUT_MS || 90000) })
+                .then(response => {
+                    if (response.code === 1) {
+                        this.$message.success("取消服务完成成功");
+                        this.search1();
+                    } else {
+                        this.$message.error(response.msg);
+                    }
+                })
+                .catch(error => {
+                    console.error('There was a problem with the request:', error);
+                    this.$message.error(error.response?.data?.message || '操作失败，请检查网络或联系管理员');
+                })
+                .finally(() => {
+                    this.loadingIds.delete(id);
+                });
+        },
+        handleCancel() {
+            this.$router.push('/activityOld');
+        },
+        onSubmitForm() {
+            this.$refs.form.validate(valid => {
+                if (valid) {
+                    const data = this.form;
+
+                    request.put(`/users/old`, data)
+                        .then(response => {
+                            if (response.code === 1) {
+                                this.$message.success(response.msg);
+                            } else {
+                                this.$message.error(response.msg);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('修改失败:', error);
+                        });
+                }
+            });
+        },
+    }
+}
+</script>
+
+<style lang="scss" scoped>
+.pageBox {
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px;
+
+    .image {
+        width: 95%;
+        height: auto;
+    }
+
+    .content {
+        margin: 10px;
+        backdrop-filter: blur(10px);
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        height: auto;
+        width: 90%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+    }
+
+    .volunteer-summary {
+        width: 90%;
+        margin-bottom: 12px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.08);
+        box-sizing: border-box;
+    }
+
+    .summary-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 13px;
+        color: #606266;
+        margin-bottom: 10px;
+    }
+
+    .batch-thank-btn {
+        width: 100%;
+    }
+
+    .activity {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        /* 水平居中 */
+        align-items: center;
+        /* 垂直居中 */
+        padding: 0px;
+
+        .el-card {
+            display: flex;
+            padding: 8px;
+            margin-left: 10px;
+            margin-right: 10px;
+            height: 140px;
+            align-items: center;
+            margin-bottom: 15px;
+
+            .cardContent {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+
+                .image {
+                    width: 40%;
+                    display: block;
+                    border-radius: 10px;
+                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+                }
+
+                .contentBox {
+                    margin-left: 20px;
+                    padding: 8px;
+                    width: 60%;
+                }
+            }
+        }
+    }
+}
+</style>

@@ -1,0 +1,207 @@
+-- MySQL 幂等脚本：与 backend/schema-timecoin.sql 结构一致，可重复执行
+-- 由 application.properties 在「未使用 dev 配置」时自动执行
+
+CREATE TABLE IF NOT EXISTS `user` (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(64) NOT NULL,
+  name VARCHAR(64) DEFAULT NULL,
+  password VARCHAR(255) NOT NULL,
+  role SMALLINT NOT NULL,
+  email VARCHAR(128) DEFAULT NULL,
+  age SMALLINT DEFAULT NULL,
+  phone VARCHAR(32) DEFAULT NULL,
+  address VARCHAR(255) DEFAULT NULL,
+  create_time DATETIME DEFAULT NULL,
+  update_time DATETIME DEFAULT NULL,
+  image VARCHAR(512) DEFAULT NULL,
+  UNIQUE KEY ux_user_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS old (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL UNIQUE,
+  CONSTRAINT fk_old_user FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS administrator (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL UNIQUE,
+  CONSTRAINT fk_admi_user FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS volunteer (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL UNIQUE,
+  CONSTRAINT fk_vol_user FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS activity (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  quota SMALLINT NOT NULL,
+  deadline DATETIME NOT NULL,
+  date DATE NOT NULL,
+  `begin` TIME NOT NULL,
+  `end` TIME NOT NULL,
+  address VARCHAR(255) NOT NULL,
+  old_id INT NOT NULL,
+  phone VARCHAR(32) DEFAULT NULL,
+  description TEXT,
+  -- status: 1待审核 2审核通过 3进行中 4拒绝 5活动过期
+  status SMALLINT NOT NULL DEFAULT 1,
+  administrator_id INT NOT NULL,
+  create_time DATETIME DEFAULT NULL,
+  update_time DATETIME DEFAULT NULL,
+  message VARCHAR(512) DEFAULT NULL,
+  service_type VARCHAR(64) NOT NULL DEFAULT 'other_service',
+  extra_json JSON NULL,
+  remain SMALLINT NOT NULL DEFAULT 0,
+  volunteer_reward INT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_act_old FOREIGN KEY (old_id) REFERENCES old(id),
+  CONSTRAINT fk_act_admi FOREIGN KEY (administrator_id) REFERENCES administrator(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 历史库迁移：若 activity 已存在且缺少新列，补齐后即可支持动态服务类型
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'activity'
+        AND COLUMN_NAME = 'service_type'
+    ),
+    'SELECT 1',
+    'ALTER TABLE activity ADD COLUMN service_type VARCHAR(64) NOT NULL DEFAULT ''other_service'''
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'activity'
+        AND COLUMN_NAME = 'extra_json'
+    ),
+    'SELECT 1',
+    'ALTER TABLE activity ADD COLUMN extra_json JSON NULL'
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS notice (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(255) NOT NULL DEFAULT '',
+  content TEXT NOT NULL,
+  create_time DATETIME DEFAULT NULL,
+  INDEX idx_notice_create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS activity_volunteer (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  activity_id INT NOT NULL,
+  volunteer_id INT NOT NULL,
+  status SMALLINT DEFAULT NULL,
+  sign SMALLINT DEFAULT NULL,
+  reward_paid SMALLINT NOT NULL DEFAULT 0,
+  create_time DATETIME DEFAULT NULL,
+  update_time DATETIME DEFAULT NULL,
+  UNIQUE KEY uk_act_vol (activity_id, volunteer_id),
+  CONSTRAINT fk_av_act FOREIGN KEY (activity_id) REFERENCES activity(id) ON DELETE CASCADE,
+  CONSTRAINT fk_av_vol FOREIGN KEY (volunteer_id) REFERENCES volunteer(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS compensation_record (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  activity_id INT NOT NULL,
+  volunteer_table_id INT NOT NULL,
+  elder_user_id INT NOT NULL,
+  amount INT NOT NULL,
+  status SMALLINT NOT NULL DEFAULT 0 COMMENT '0 待追讨 / 1 已追讨 / 2 平台核销',
+  create_time DATETIME DEFAULT NULL,
+  update_time DATETIME DEFAULT NULL,
+  INDEX idx_compensation_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `user` (username, name, password, role, email, age, phone, create_time, update_time)
+SELECT 'admin', '系统管理员', '123456', 3, 'admin@local', 30, '13800000000', NOW(), NOW()
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM `user` WHERE username = 'admin');
+INSERT INTO administrator (user_id)
+SELECT u.id FROM `user` u WHERE u.username = 'admin'
+AND NOT EXISTS (SELECT 1 FROM administrator a WHERE a.user_id = u.id);
+
+-- 用户时间币余额镜像（与链上 balanceOf 对账；链为权威数据源）
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'coin_balance'
+    ),
+    'SELECT 1',
+    'ALTER TABLE `user` ADD COLUMN coin_balance BIGINT NOT NULL DEFAULT 0'
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'balance_sync_time'
+    ),
+    'SELECT 1',
+    'ALTER TABLE `user` ADD COLUMN balance_sync_time DATETIME DEFAULT NULL'
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS chain_account_mirror (
+  account_id VARCHAR(64) NOT NULL PRIMARY KEY,
+  coin_balance BIGINT NOT NULL DEFAULT 0,
+  balance_sync_time DATETIME DEFAULT NULL,
+  update_time DATETIME DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO chain_account_mirror (account_id, coin_balance)
+SELECT 'platform', 0 FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM chain_account_mirror WHERE account_id = 'platform');
+
+CREATE TABLE IF NOT EXISTS chain_tx_log (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  tx_type VARCHAR(16) NOT NULL COMMENT 'MINT / TRANSFER',
+  from_account VARCHAR(64) DEFAULT NULL,
+  to_account VARCHAR(64) NOT NULL,
+  amount BIGINT NOT NULL,
+  tx_hash VARCHAR(128) DEFAULT NULL,
+  biz_type VARCHAR(64) DEFAULT NULL,
+  biz_ref VARCHAR(128) DEFAULT NULL,
+  create_time DATETIME DEFAULT NULL,
+  INDEX idx_chain_tx_hash (tx_hash),
+  INDEX idx_chain_tx_to (to_account),
+  INDEX idx_chain_tx_from (from_account),
+  INDEX idx_chain_tx_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS chain_reconcile_log (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  run_time DATETIME NOT NULL,
+  total_checked INT NOT NULL DEFAULT 0,
+  mismatch_count INT NOT NULL DEFAULT 0,
+  fixed_count INT NOT NULL DEFAULT 0,
+  chain_ready TINYINT NOT NULL DEFAULT 0,
+  detail_json TEXT,
+  create_time DATETIME DEFAULT NULL,
+  INDEX idx_reconcile_run_time (run_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
