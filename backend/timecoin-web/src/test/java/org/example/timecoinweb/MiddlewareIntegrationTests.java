@@ -36,7 +36,7 @@ import static org.mockito.ArgumentMatchers.*;
         "spring.datasource.url=${test.datasource-url:jdbc:h2:mem:p1middleware;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${test.datasource-driver:org.h2.Driver}",
         "spring.datasource.username=${test.datasource-user:sa}", "spring.datasource.password=${test.datasource-password:}",
-        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql,classpath:schema-rag.sql",
+        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql,classpath:schema-rag.sql,${test.index-schema:classpath:schema-query-indexes-h2.sql}",
         "security.jwt-secret=test-only-p1-middleware-secret-32-bytes", "ai.chat.enabled=false",
         "settlement.mq-enabled=true", "settlement.dispatch-initial-ms=3600000", "settlement.dispatch-ms=3600000",
         "spring.rabbitmq.port=${test.rabbit-port:5673}", "spring.rabbitmq.listener.simple.auto-startup=false",
@@ -169,7 +169,7 @@ class MiddlewareIntegrationTests {
             int allowed = 0, limited = 0;
             for (Future<Integer> call : calls) { int status = call.get(5, TimeUnit.SECONDS); if (status == 200) allowed++; if (status == 429) limited++; }
             assertEquals(10, allowed); assertEquals(10, limited);
-            String key = "timebank:rate:auth:ip:" + Hash.sha3String(ip);
+            String key = "timebank:rate:v2:auth:ip:" + Hash.sha3String(ip);
             assertTrue(redis.getExpire(key) > 0 && redis.getExpire(key) <= 60);
             redis.delete(key);
         } finally { pool.shutdownNow(); }
@@ -191,6 +191,69 @@ class MiddlewareIntegrationTests {
         long current = jdbc.queryForObject("select version_value from cache_revision where cache_name='notices'", Long.class);
         assertEquals("[]", redis.opsForValue().get("timebank:notices:v" + current));
         assertTrue(redis.getExpire("timebank:notices:v" + current) <= 5);
+    }
+
+    @Test
+    void slidingWindowRetainsRecentRequestsAndRejectsWithoutExtendingTtl() throws Exception {
+        RedisRateLimitInterceptor limiter=new RedisRateLimitInterceptor(redis);
+        ReflectionTestUtils.setField(limiter,"enabled",true);ReflectionTestUtils.setField(limiter,"authLimit",2);
+        String ip="c-window-"+UUID.randomUUID(), key="timebank:rate:v2:auth:ip:"+Hash.sha3String(ip);
+        String legacy="timebank:rate:auth:ip:"+Hash.sha3String(ip);
+        Long now=redis.execute(new org.springframework.data.redis.core.script.DefaultRedisScript<>(
+                "local t=redis.call('TIME'); return t[1]*1000+math.floor(t[2]/1000)",Long.class),Collections.emptyList());
+        try {
+            // 首次请求已过期，但临近旧窗口末尾的两个请求仍占额度。
+            redis.opsForZSet().add(key,"expired",now-61000);
+            redis.opsForZSet().add(key,"recent-one",now-10000);redis.opsForZSet().add(key,"recent-two",now-5000);
+            redis.expire(key,java.time.Duration.ofSeconds(55));
+            redis.opsForValue().set(legacy,"9",java.time.Duration.ofSeconds(60));
+            MockHttpServletRequest request=new MockHttpServletRequest("POST","/login");request.setRemoteAddr(ip);
+            long ttl=redis.getExpire(key,TimeUnit.MILLISECONDS);
+            MockHttpServletResponse response=new MockHttpServletResponse();assertFalse(limiter.preHandle(request,response,new Object()));
+            assertEquals(429,response.getStatus());assertTrue(Integer.parseInt(response.getHeader("Retry-After"))<=50);
+            assertEquals(2L,redis.opsForZSet().zCard(key));assertTrue(redis.getExpire(key,TimeUnit.MILLISECONDS)<=ttl);
+            assertEquals("9",redis.opsForValue().get(legacy));
+            redis.opsForZSet().add(key,"recent-one",now-61000);
+            assertTrue(limiter.preHandle(request,new MockHttpServletResponse(),new Object()));
+            assertEquals(2L,redis.opsForZSet().zCard(key));
+            assertFalse(limiter.preHandle(request,new MockHttpServletResponse(),new Object()));
+        } finally {redis.delete(List.of(key,legacy));}
+    }
+
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+
+    @Test
+    @EnabledIfSystemProperty(named="c.explain",matches="true")
+    void recordMysqlCoreQueryPlansWithRollbackFixtures() {
+        assertTrue(jdbc.queryForObject("select database()",String.class).endsWith("_test"),"仅允许独立测试库");
+        // 启动时已执行一次；再次执行验证已有库迁移的可重复性。DDL置于样本事务之外。
+        new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+                new org.springframework.core.io.ClassPathResource("schema-query-indexes-mysql.sql")).execute(jdbc.getDataSource());
+        new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status->{
+            status.setRollbackOnly();
+            jdbc.update("insert into old(user_id) values(991)");
+            jdbc.update("insert into administrator(user_id) values(991)");
+            int oldId=jdbc.queryForObject("select id from old where user_id=991",Integer.class);
+            int adminId=jdbc.queryForObject("select id from administrator where user_id=991",Integer.class);
+            List<Object[]> orders=new ArrayList<>(),outbox=new ArrayList<>(),activities=new ArrayList<>();
+            for(int i=0;i<1000;i++) {
+                String id=UUID.randomUUID().toString();
+                orders.add(new Object[]{id,id,id,i%100,"ADMIN_MINT","991",1,i%10==0?"PENDING":"SUCCEEDED"});
+                outbox.add(new Object[]{id});
+                activities.add(new Object[]{"explain-"+i,oldId,adminId,i%5+1});
+            }
+            jdbc.batchUpdate("insert into settlement_order(id,request_key,payload_hash,owner_id,biz_type,to_user,amount,state) values(?,?,?,?,?,?,?,?)",orders);
+            jdbc.batchUpdate("insert into settlement_outbox(order_id) values(?)",outbox);
+            jdbc.batchUpdate("insert into activity(title,quota,deadline,date,`begin`,`end`,address,old_id,administrator_id,status,update_time) values(?,5,NOW(),CURRENT_DATE,'09:00:00','10:00:00','test',?,?,?,NOW())",activities);
+            Map<String,String> queries=new LinkedHashMap<>();
+            queries.put("outbox","select o.order_id from settlement_outbox o join settlement_order s on s.id=o.order_id where o.next_send<=CURRENT_TIMESTAMP and ((s.state in ('PENDING','RETRY') and s.next_attempt<=CURRENT_TIMESTAMP) or (s.state='PROCESSING' and s.lease_until<CURRENT_TIMESTAMP)) order by o.next_send limit 10");
+            queries.put("activity-status","select * from activity where status=2 order by update_time desc limit 10");
+            queries.put("activity-owner","select * from activity where old_id="+oldId+" order by update_time desc limit 10");
+            queries.put("settlement-owner","select id from settlement_order where owner_id=1 order by created_at desc limit 100");
+            queries.put("settlement-admin","select id from settlement_order order by created_at desc limit 100");
+            System.out.println("C_EXPLAIN mysql="+jdbc.queryForObject("select version()",String.class)+" fixture=1000 orders/outbox/activities; pending=10%; rollback=true");
+            queries.forEach((name,sql)->System.out.println("C_EXPLAIN "+name+" SQL="+sql+" PLAN="+jdbc.queryForList("EXPLAIN "+sql)));
+        });
     }
 
     @Test

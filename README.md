@@ -7,7 +7,35 @@
 - A项当前文件脱敏：安全报告移除姓名、学号；方案PDF移除封面团队编号、作者及XML元数据，并将第82～84页的6张人物照片替换为隐私说明。保留85页、原图注及参考文献，不删除公开文献作者信息。
 - A项验证：PDF可重新打开，85页保持不变；未修改页面的提取文字与拉取版本完全一致；目标编号不再出现、作者/XML元数据为空、无附件、6张人物照片不再作为图片对象出现在对应页面；已渲染检查封面和照片页；`git diff --check`通过。仅修改文档，没有变更后端业务代码，因此本阶段不重复运行业务测试。
 - 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
-- B项RAG基础链路已实现并完成本地验证，见下节。后续按字母顺序推进C项；当前没有新的性能数字，也未实现分库分表、联盟链迁移或Agent。
+- A、B项已提交至本地`dec8efd`。C项滑动窗口限流、查询计划核验和索引迁移已完成，见下节；后续按字母顺序推进D项，当前未实现分库分表、联盟链迁移或Agent，也没有新增性能数字。
+
+## C项高并发设计补强（2026-11-16）
+
+限流从固定窗口改为精确滑动日志：Redis ZSET保存已放行请求，Lua使用Redis服务端`TIME`计算毫秒时间，原子删除`时间戳≤当前时间−60000ms`的记录、检查额度并写入UUID成员。登录/注册仍按来源IP合并10次，其他已鉴权写请求按用户合并30次，统计区间为最近60秒；UUID避免同毫秒请求合并。满额返回429，`Retry-After`按最早记录距出窗的剩余时间向上取整，拒绝请求不写记录也不续期；Redis故障返回503，异步再分派不重复扣额度，非正额度配置启动失败。
+
+新键使用`timebank:rate:v2:`，避免旧String计数器与新ZSET冲突，旧键按原TTL自然到期。升级时额度会重新起算；新旧实例混跑期间各用一套额度，应统一切换版本，不能宣称滚动升级窗口内仍有统一总额度。单个身份的集合最多保存配置额度数量，但活跃身份数量仍会影响Redis总内存。实现参考[Redis服务端时间](https://redis.io/docs/latest/commands/time/)和[按分值清理ZSET](https://redis.io/docs/latest/commands/zremrangebyscore/)。
+
+MySQL核验发现旧库缺少源码已声明的`ix_settlement_owner`和`ix_settlement_activity`：`CREATE TABLE IF NOT EXISTS`只保证表存在，不迁移旧表索引。新增`schema-query-indexes-mysql.sql`按索引名称检查并补齐，另增加`settlement_order(created_at)`、`activity(status,update_time)`、`activity(old_id,update_time)`；H2使用对应幂等脚本。两者均接入初始化链路。已有同名但定义不同的索引不自动重建；生产大表建索引需预先评估DDL时间与锁影响，不应直接套用本地测试耗时。
+
+EXPLAIN实测环境为MySQL8.0.46独立`timebank_p1_test`库，事务内加入1000条结算、1000条outbox和1000条活动，结束回滚。结算10%为PENDING、90%为SUCCEEDED，100个owner均分；活动5种状态均分，全部属于同一老人，时间字段相同。以下`rows`是优化器估计扫描量，不是实际耗时或QPS；该样本不能代表生产分布。
+
+| 实际查询 | 修改前 | 索引迁移后 |
+|---|---|---|
+| 结算outbox轮询，含PENDING/RETRY和过期PROCESSING，按next_send排序取10条 | s表`range/ix_settlement_due/rows=102`，o表`eq_ref/PRIMARY/rows=1`；临时表＋filesort | 相同，保留跨表过滤与排序成本，未强制改变驱动表 |
+| 活动status=2，按update_time倒序取10条 | `ALL/rows=1000`，where＋filesort | `ref/ix_activity_status_updated/rows=200`，Backward index scan，无filesort |
+| 指定老人活动，按update_time倒序取10条 | `ALL/rows=1000`，where＋filesort | 仍为`ALL/rows=1000`；新复合索引是候选，但该老人拥有全部样本，优化器未选择它 |
+| owner_id=1的结算，按created_at倒序取100条 | `ALL/rows=1000`，where＋filesort | `ref/ix_settlement_owner/rows=10`，Backward index scan＋Using index |
+| 管理员全部结算，按created_at倒序取100条 | `ALL/rows=1000`，filesort | `index/ix_settlement_created/rows=100`，Backward index scan＋Using index |
+
+完整SQL及计划由`MiddlewareIntegrationTests.recordMysqlCoreQueryPlansWithRollbackFixtures`输出`C_EXPLAIN`记录。原始证据在`backend/timecoin-web/target/c-mysql-tests.log`，迁移后在`c-mysql-indexed-tests.log`；不新增说明文档。活动标题/地址的`LIKE '%关键词%'`不因这些B-tree索引变成高效全文检索；本项未改造搜索，也未消除结算列表逐条加载的查询次数。
+
+分布式锁与业务幂等的区别：锁解决某一时间段谁可以执行，例如RAG缓存重建互斥；租约过期或进程崩溃后，另一实例仍可能重做。幂等解决同一业务重复提交后结果是否重复生效：本项目通过请求键唯一约束、参数摘要比对、持久状态和业务事务复用原结算单；链上重试复用原签名交易，消费者通过租约令牌阻止过期任务提交。仅有Redis锁不足以保证不重复付款，outbox的至少一次投递也必须配合消费幂等。缓存版本号负责隔离更新前后的缓存条目，不能代替幂等或金融账务事务。
+
+本大项统一验证：后端＋真实Redis/RabbitMQ执行67项通过、2项跳过（外部broker重启演练和MySQL专用EXPLAIN）；日志`c-final-tests.log`。独立MySQL联调启用EXPLAIN，10项通过、1项重启演练跳过；日志`c-mysql-indexed-tests.log`。真实Redis测试覆盖双实例20次并发仅放行10次、窗口滑动、拒绝不续期、动态等待时间和旧键兼容；原权限、RAG、结算回归同时通过。本项无前端改动，不重复前端构建。
+
+另单独复跑EXPLAIN测试验证启动后再次执行索引迁移，1项通过，日志`c-migration-repeat-test.log`；SQL核查活动与结算样本均已回滚至0条。`git diff --check`通过。
+
+复现普通回归：`mvn -o -f backend/pom.xml test '-Dp1.integration=true'`。MySQL回归在同一命令增加`'-Dtest=MiddlewareIntegrationTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dc.explain=true'`，并按独立测试库设置`test.datasource-url`、`test.datasource-driver=com.mysql.cj.jdbc.Driver`、`test.datasource-user`和`test.datasource-password`，同时指定`'-Dtest.schema=classpath:schema-mysql.sql' '-Dtest.index-schema=classpath:schema-query-indexes-mysql.sql'`。EXPLAIN测试仅允许库名以`_test`结尾，需使用独立Redis/RabbitMQ，勿指向业务库。
 
 ## B项RAG实施与验证（2026-11-16）
 

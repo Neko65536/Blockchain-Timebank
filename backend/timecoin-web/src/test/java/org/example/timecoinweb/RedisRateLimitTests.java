@@ -25,7 +25,7 @@ class RedisRateLimitTests {
     @Test
     void redisFailureRejectsAuthenticatedWriteWithoutExecutingBusiness() throws Exception {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        doThrow(new RedisConnectionFailureException("offline")).when(redis).execute(any(DefaultRedisScript.class), anyList(), any());
+        doThrow(new RedisConnectionFailureException("offline")).when(redis).execute(any(DefaultRedisScript.class), anyList(), any(), any(), any());
         RedisRateLimitInterceptor limiter = new RedisRateLimitInterceptor(redis);
         ReflectionTestUtils.setField(limiter, "enabled", true);
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/info/coin/transfer");

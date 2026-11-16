@@ -22,8 +22,15 @@ public class RedisRateLimitInterceptor implements HandlerInterceptor {
     @Value("${app.redis-enabled:false}") private boolean enabled;
     @Value("${app.rate-limit.write-limit:30}") private int writeLimit;
     @Value("${app.rate-limit.auth-limit:10}") private int authLimit;
-    private static final DefaultRedisScript<Long> WINDOW = new DefaultRedisScript<>(
-            "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]); end; return n", Long.class);
+    private static final DefaultRedisScript<Long> WINDOW = new DefaultRedisScript<>();
+    static {
+        WINDOW.setLocation(new org.springframework.core.io.ClassPathResource("rate-limit-sliding.lua"));
+        WINDOW.setResultType(Long.class);
+    }
+    @javax.annotation.PostConstruct
+    public void validateLimits() {
+        if (writeLimit <= 0 || authLimit <= 0) throw new IllegalArgumentException("限流额度必须大于0");
+    }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -36,13 +43,15 @@ public class RedisRateLimitInterceptor implements HandlerInterceptor {
         // 不直接信任客户端X-Forwarded-For；反向代理须在可信边界配置真实地址。
         String subject = auth ? "ip:" + Hash.sha3String(request.getRemoteAddr()) : "user:" + user;
         try {
-            Long count = redis.execute(WINDOW, Collections.singletonList("timebank:rate:" + (auth ? "auth:" : "write:") + subject), "60");
-            if (count == null) return reject(response, 503, "限流服务暂不可用");
-            return count <= (auth ? authLimit : writeLimit) || reject(response, 429, "请求过于频繁，请稍后重试");
-        } catch (DataAccessException unavailable) { return reject(response, 503, "限流服务暂不可用，请稍后重试"); }
+            // 版本化键避免与旧固定窗口的String类型冲突；UUID避免同毫秒请求被ZSET合并。
+            Long waitMs = redis.execute(WINDOW, Collections.singletonList("timebank:rate:v2:" + (auth ? "auth:" : "write:") + subject),
+                    "60000", Integer.toString(auth ? authLimit : writeLimit), java.util.UUID.randomUUID().toString());
+            if (waitMs == null || waitMs < 0) return reject(response, 503, "限流服务暂不可用", 3);
+            return waitMs == 0 || reject(response, 429, "请求过于频繁，请稍后重试", (waitMs + 999) / 1000);
+        } catch (DataAccessException unavailable) { return reject(response, 503, "限流服务暂不可用，请稍后重试", 3); }
     }
-    private boolean reject(HttpServletResponse response, int code, String message) throws Exception {
-        response.setStatus(code); response.setHeader("Retry-After", code == 429 ? "60" : "3");
+    private boolean reject(HttpServletResponse response, int code, String message, long retrySeconds) throws Exception {
+        response.setStatus(code); response.setHeader("Retry-After", Long.toString(retrySeconds));
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(JSONObject.toJSONString(Result.error(message)));
         return false;
