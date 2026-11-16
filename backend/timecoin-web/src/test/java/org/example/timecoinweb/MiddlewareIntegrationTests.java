@@ -36,7 +36,7 @@ import static org.mockito.ArgumentMatchers.*;
         "spring.datasource.url=${test.datasource-url:jdbc:h2:mem:p1middleware;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${test.datasource-driver:org.h2.Driver}",
         "spring.datasource.username=${test.datasource-user:sa}", "spring.datasource.password=${test.datasource-password:}",
-        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql",
+        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql,classpath:schema-rag.sql",
         "security.jwt-secret=test-only-p1-middleware-secret-32-bytes", "ai.chat.enabled=false",
         "settlement.mq-enabled=true", "settlement.dispatch-initial-ms=3600000", "settlement.dispatch-ms=3600000",
         "spring.rabbitmq.port=${test.rabbit-port:5673}", "spring.rabbitmq.listener.simple.auto-startup=false",
@@ -52,6 +52,37 @@ class MiddlewareIntegrationTests {
     @Autowired SettlementService settlements;
     @Autowired NoticeService notices;
     @MockBean TimeCoinChainService chain;
+    @Autowired org.example.timecoinweb.rag.KnowledgeService knowledge;
+    @Autowired org.example.timecoinweb.rag.RagMessaging ragMessaging;
+    @Autowired org.example.timecoinweb.rag.RagAnswerService answers;
+    @Autowired org.example.timecoinweb.rag.EmbeddingService embeddings;
+    @Autowired AiChatService ai;
+
+    @Test
+    void ragEmptyCacheHasShortTtlAndMutexRejectsDuplicateGeneration() {
+        String question="不存在的资料"+UUID.randomUUID();
+        String key="timebank:rag:v1:"+Hash.sha3String(knowledge.version()+":1:"+embeddings.key()+":"+ai.groundingKey()+":extractive:0.2:"+question);
+        redis.opsForValue().set(key+":lock","other-worker",java.time.Duration.ofSeconds(150));
+        try {
+            org.springframework.web.server.ResponseStatusException error=assertThrows(org.springframework.web.server.ResponseStatusException.class,()->answers.answer(1,question));
+            assertEquals(503,error.getRawStatusCode());assertEquals("other-worker",redis.opsForValue().get(key+":lock"));
+        } finally { redis.delete(key+":lock"); }
+        assertEquals("NO_EVIDENCE",answers.answer(1,question).get("mode"));
+        Long ttl=redis.getExpire(key);assertNotNull(ttl);assertTrue(ttl>0 && ttl<=10);assertFalse(Boolean.TRUE.equals(redis.hasKey(key+":lock")));
+        redis.delete(key);
+    }
+
+    @Test
+    void ragOutboxIndexesWithRealBrokerAndCacheInvalidatesOnDisable() throws Exception {
+        String id=knowledge.submit(UUID.randomUUID().toString(),"志愿者报名指引","志愿者进入活动列表阅读说明，选择有剩余名额的活动后点击报名。",2,"FAQ");
+        ragMessaging.dispatch();listeners.start();
+        await(()->"READY".equals(jdbc.queryForObject("select state from rag_document where id=?",String.class,id)));
+        assertTrue(jdbc.queryForObject("select send_count from rag_outbox where document_id=?",Integer.class,id)>0);
+        Map<String,Object> first=answers.answer(2,"志愿者报名指引");
+        assertEquals("EXTRACTIVE",first.get("mode"));assertEquals(first,answers.answer(2,"志愿者报名指引"));
+        assertEquals("NO_EVIDENCE",answers.answer(1,"志愿者报名指引").get("mode"));
+        knowledge.disable(id);assertEquals("NO_EVIDENCE",answers.answer(2,"志愿者报名指引").get("mode"));
+    }
 
     @BeforeEach
     void prepare() throws Exception {

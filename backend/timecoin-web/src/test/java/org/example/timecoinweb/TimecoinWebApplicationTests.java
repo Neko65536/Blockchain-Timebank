@@ -86,6 +86,16 @@ class TimecoinWebApplicationTests {
     }
 
     @Test
+    void knowledgeManagementRequiresAdminAndChatUsesAsyncDispatch() throws Exception {
+        String elder=JwtUtils.generateJwt(Map.of("id",2,"role",1));
+        mvc.perform(get("/administrator/knowledge").header("token",elder)).andExpect(status().isForbidden());
+        org.springframework.test.web.servlet.MvcResult result=mvc.perform(post("/users/old/ai/chat").header("token",elder)
+                .contentType("application/json").content("{\"message\":\"客服电话\"}"))
+                .andExpect(request().asyncStarted()).andReturn();
+        mvc.perform(asyncDispatch(result)).andExpect(status().isOk()).andExpect(jsonPath("$.data.mode").value("GUARDRAIL"));
+    }
+
+    @Test
     void repeatedCancellationReturnsOnlyOneSlot() {
         assertEquals("1", users.volAcceptActivity(1, 10));
         users.volCancel(10, 1);

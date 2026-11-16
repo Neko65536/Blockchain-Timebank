@@ -34,6 +34,7 @@ const routes = [
     // 使用 requireAuth 路由守卫检查 token 是否存在
     beforeEnter: requireAuth,
     children: [
+      { path: '/knowledgeView', name: 'KnowledgeView', component: () => import('@/views/elementui/KnowledgeView.vue') },
       {
         path: '/homeView',
         name: 'HomeView',

@@ -14,6 +14,14 @@
       >
         <div class="message-bubble">
           <span v-html="formatMessage(item.content)"></span>
+          <small v-if="item.mode === 'EXTRACTIVE'">离线原文摘录（非大模型生成）</small>
+          <details v-if="item.citations && item.citations.length">
+            <summary>查看知识来源</summary>
+            <blockquote v-for="source in item.citations" :key="source.chunkId">
+              <strong>{{ source.title }} · 片段{{ source.ordinal + 1 }}</strong>
+              <p>{{ source.quote }}</p>
+            </blockquote>
+          </details>
           <span v-if="item.pending" class="typing-dots">
             <span></span><span></span><span></span>
           </span>
@@ -176,10 +184,10 @@ export default {
       }) - 1;
       this.scrollToBottom();
 
-      request.post(this.endpoint(), { message: text }, { timeout: 260000 })
+      request.post(this.endpoint(), { message: text }, { timeout: 125000 })
         .then(response => {
           if (response.code === 1 && response.data && response.data.reply) {
-            this.$set(this.messages, pendingIndex, { role: 'assistant', content: response.data.reply });
+            this.$set(this.messages, pendingIndex, { role: 'assistant', content: response.data.reply, citations: response.data.citations, mode: response.data.mode });
           } else {
             this.$set(this.messages, pendingIndex, { role: 'assistant', content: response.msg || 'AI回复失败，请稍后重试。' });
           }

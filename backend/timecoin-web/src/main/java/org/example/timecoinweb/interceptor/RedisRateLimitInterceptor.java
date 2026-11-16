@@ -27,6 +27,7 @@ public class RedisRateLimitInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if (request.getDispatcherType() == javax.servlet.DispatcherType.ASYNC) return true;
         if (!enabled || !java.util.Set.of("POST", "PUT", "PATCH", "DELETE").contains(request.getMethod())) return true;
         String path = request.getRequestURI().substring(request.getContextPath().length());
         boolean auth = "/login".equals(path) || "/register".equals(path);

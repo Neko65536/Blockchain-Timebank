@@ -14,6 +14,15 @@ import static org.mockito.ArgumentMatchers.*;
 
 class RedisRateLimitTests {
     @Test
+    void asyncRedispatchDoesNotChargeAgain() throws Exception {
+        StringRedisTemplate redis=mock(StringRedisTemplate.class);
+        RedisRateLimitInterceptor limiter=new RedisRateLimitInterceptor(redis);
+        ReflectionTestUtils.setField(limiter,"enabled",true);
+        MockHttpServletRequest request=new MockHttpServletRequest("POST","/users/old/ai/chat");
+        request.setAttribute("authenticatedUserId",2);request.setDispatcherType(javax.servlet.DispatcherType.ASYNC);
+        assertTrue(limiter.preHandle(request,new MockHttpServletResponse(),new Object()));verifyNoInteractions(redis);
+    }
+    @Test
     void redisFailureRejectsAuthenticatedWriteWithoutExecutingBusiness() throws Exception {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         doThrow(new RedisConnectionFailureException("offline")).when(redis).execute(any(DefaultRedisScript.class), anyList(), any());

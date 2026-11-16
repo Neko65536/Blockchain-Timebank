@@ -1,5 +1,53 @@
 # 基于区块链的时间币服务系统
 
+## 改进规划执行记录（2026-11-16）
+
+已同步目标仓库至`f79000f`，后续按A→B→C→D→E→F→G推进，每完成一大项后统一验证和更新现有文档。Agent部分保留规划中的“暂不实施”范围。规划中的工作量、兼容性和简历措辞需要以实际实现及验证为准。
+
+- A项当前文件脱敏：安全报告移除姓名、学号；方案PDF移除封面团队编号、作者及XML元数据，并将第82～84页的6张人物照片替换为隐私说明。保留85页、原图注及参考文献，不删除公开文献作者信息。
+- A项验证：PDF可重新打开，85页保持不变；未修改页面的提取文字与拉取版本完全一致；目标编号不再出现、作者/XML元数据为空、无附件、6张人物照片不再作为图片对象出现在对应页面；已渲染检查封面和照片页；`git diff --check`通过。仅修改文档，没有变更后端业务代码，因此本阶段不重复运行业务测试。
+- 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
+- B项RAG基础链路已实现并完成本地验证，见下节。后续按字母顺序推进C项；当前没有新的性能数字，也未实现分库分表、联盟链迁移或Agent。
+
+## B项RAG实施与验证（2026-11-16）
+
+管理员在PC端“知识库管理”粘贴已核实的文档、FAQ或公告正文，设置标题与可见角色，提交后刷新查看状态。当前支持纯文本/Markdown正文，不支持PDF解析或URL抓取；公告按导入时的正文快照保存，修改公告后需禁用旧资料并重新导入。老人端和志愿者端沿用原AI问答入口，新增来源标题、片段编号与原文摘录。
+
+- 可靠入库：文档与outbox同事务写入；相同幂等键与参数复用文档，参数变化返回409。独立持久化队列`timebank.rag.work`使用confirm/return确认，outbox重投未完成任务。消费者以180秒租约和随机令牌抢占，网络调用在事务外；全部向量完成后，文档、片段及知识库版本同事务提交。禁用或租约失效后旧消费者不能复活资料；失败退避重试，5次后转`REVIEW`，管理员可重试。
+- 检索：按600个Unicode码点切分，重叠80码点，Embedding每批最多16段。向量持久化到数据库，`VectorIndex`的内存实现按版本重建快照，先过滤角色，再做全量余弦Top-5检索。正文最多16000个UTF-16代码单元，最多500份未禁用文档，适用于小规模知识库；未实现ANN、pgvector或Milvus适配。支持全部登录用户、老人、志愿者、管理员四种可见范围，不提供个人私有知识库。
+- 生成与引用：检索证据进入Prompt，模型须返回严格JSON；引用编号须来自本次检索，引文须是原文连续片段，否则拒绝输出。保留输入/输出guardrail，无命中不调用生成模型。返回前复核知识库版本，更新或禁用期间返回409重试。引用校验仅证明来源存在，不能证明回答中每句话正确。
+- 线程隔离：所有AI接口使用`DeferredResult`，独立4个工作线程、16个排队位置，满载返回503；120秒超时返回504并取消任务、移除排队项。模型HTTP总时限80秒，Embedding单次25秒。异步再分派不重复消耗写请求限流额度。
+- 缓存：Redis键包含知识库版本、角色、问题摘要、Embedding/问答配置、模式和阈值。成功结果缓存120～150秒，无命中缓存10秒，同键互斥租约150秒并校验令牌释放；锁忙返回503。启用Redis但连接失败时拒绝生成，防止模型请求激增。不同环境须使用独立Redis实例。
+
+默认生产配置使用远程Embedding和模型生成，已移除停用域名默认值。`dev`明确使用`local-hash`词面向量与`extractive`原文摘录，页面标注非大模型生成，不在远程失败时自动降级。
+
+| 环境变量 | 用途 |
+|---|---|
+| `AI_RAG_EMBEDDING_MODE` | `remote`或`local-hash` |
+| `AI_RAG_EMBEDDING_URL`、`AI_RAG_EMBEDDING_KEY` | OpenAI兼容Embedding完整端点与密钥 |
+| `AI_RAG_EMBEDDING_MODEL`、`AI_RAG_EMBEDDING_DIMENSIONS` | 模型名与维度，默认`text-embedding-v3`、512；须与供应商支持一致 |
+| `AI_RAG_ANSWER_MODE` | `model`生成＋引用，或`extractive`离线摘录 |
+| `AI_CHAT_BASE_URL`、`AI_CHAT_API_URL` | 基础地址＋路径，后者也可填写完整URL |
+| `AI_CHAT_API_KEY`、`AI_CHAT_MODEL` | 问答密钥与实际开通的模型名 |
+| `AI_RAG_MQ_ENABLED` | 默认跟随`settlement.mq-enabled`；关闭时导入保持`PENDING`，不会同步索引 |
+| `AI_RAG_MINIMUM_SCORE` | 默认0.2，上线前需针对知识库和模型评估 |
+
+完整本地演示：按下文启动已有`backend/compose.p1.yml`，后端使用`dev,p1`、`REDIS_PORT=6380`和`RABBITMQ_PORT=5673`，JWT配置沿用现有方式。管理员导入资料并等到`READY`后，用可见角色提问。真实模型验证需显式覆盖上述两种模式并提供模型配置；Embedding配置变化后旧向量不参与检索，须禁用旧文档并重新导入。
+
+管理API：`GET/POST /administrator/knowledge`（POST需`Idempotency-Key`）、`DELETE /administrator/knowledge/{id}`禁用、`POST /administrator/knowledge/{id}/retry`重试，沿用JWT管理员鉴权。问答仍使用`POST /users/old/ai/chat`和`POST /users/vol/ai/chat`，请求`{"message":"问题"}`；成功响应`data`保留`reply`并新增`mode/citations`。开放式聊天已改为知识库回答，尚未入库会提示依据不足；资料类型只是管理员填写的分类，不代表自动同步公告。
+
+本项完成后统一验证，日志位于`backend/timecoin-web/target/`，不纳入Git：
+
+| 检查 | 实际结果 |
+|---|---|
+| 后端＋真实Redis/RabbitMQ | `mvn -o -f backend/pom.xml test '-Dp1.integration=true'`：66项通过，1项需外部broker重启的旧演练跳过；`b-final-tests.log` |
+| MySQL8＋真实Redis/RabbitMQ | 独立测试库执行`MiddlewareIntegrationTests`：8项通过，同一重启演练跳过；`b-mysql-tests.log`。首次测试连接缺少认证配置，修正测试JDBC参数后通过，未修改生产认证 |
+| 新增验证 | Unicode切分、幂等、重复消费、租约恢复、禁用竞争、失败重试、角色隔离、版本失效、伪造引用拒绝、guardrail、Embedding协议、队列饱和/超时取消、异步鉴权/限流、真实MQ入库和Redis短缓存/互斥 |
+| PC端与手机端 | 分别`npm run build`通过；`b-pc-build.log`、`b-phone-build.log`。原有Sass弃用与资源体积告警保留，未做浏览器交互验收 |
+| 原请求幂等回归 | `node --experimental-vm-modules --test vue-system/tests/settlement.test.cjs`：6项通过；`b-request-tests.log` |
+
+Embedding远程协议使用本地HTTP测试服务，生成模型使用测试替身；未调用真实云模型，没有Qwen效果或QPS达标声明。Agent仍暂不实施。下方P1章节保留当时的历史测试数量与范围，当前RAG进展以本节为准。
+
 仓库发布配置：默认MySQL密码通过`DB_PASSWORD`环境变量注入，不在代码中保存；`dev`测试配置不受影响。发布快照排除构建目录、本地链部署产物、IDE配置和压缩包。
 
 已移除未启用OSS工具类中的历史密钥注释；当前图片上传仍使用本地存储。未来接入OSS需通过环境变量提供凭据，历史暴露的密钥应在阿里云控制台撤销或轮换。
