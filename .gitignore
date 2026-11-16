@@ -15,6 +15,10 @@
 .env.*
 !.env.example
 
+# Local dev tooling (portable Redis/RabbitMQ/Erlang, WorkBuddy workspace data)
+/tools/
+/.workbuddy/
+
 # Geth local private chain data
 /geth-local/
 /geth-local.log
