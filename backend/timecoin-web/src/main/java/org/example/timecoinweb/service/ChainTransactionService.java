@@ -28,14 +28,16 @@ public class ChainTransactionService {
     private final BlockchainProperties properties;
     private final ObjectProvider<Web3j> clients;
     private final ObjectProvider<Credentials> credentials;
+    private final org.example.timecoinweb.config.ShardRouting routing;
 
     public ChainTransactionService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                    BlockchainProperties properties, ObjectProvider<Web3j> clients,
-                                   ObjectProvider<Credentials> credentials) {
+                                   ObjectProvider<Credentials> credentials, org.example.timecoinweb.config.ShardRouting routing) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.clients = clients;
         this.credentials = credentials;
+        this.routing = routing;
         this.independent = new TransactionTemplate(manager);
         this.independent.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -59,7 +61,7 @@ public class ChainTransactionService {
         } catch (org.springframework.dao.DuplicateKeyException alreadyExists) { /* 数据库唯一键保证只有一条锁记录。 */ }
         Submission submission = independent.execute(status -> {
             jdbc.queryForList("select scope_key from chain_signer where scope_key=? for update", scope);
-            List<Submission> previous = jdbc.query("select * from chain_submission where request_key in (?,?)", (rs, n) -> {
+            List<Submission> previous = jdbc.query("select * from chain_submission where "+routing.all("created_at")+" and request_key in (?,?)", (rs, n) -> {
                 if (!scope.equals(rs.getString("scope_key"))) throw new IllegalStateException("原结算的链或签名账户已变化，请恢复原配置");
                 return new Submission(rs.getString("tx_hash"), rs.getString("raw_tx"), rs.getString("payload_hash"), rs.getString("state"));
             }, key, legacyKey);
@@ -69,7 +71,7 @@ public class ChainTransactionService {
                 return saved;
             }
             BigInteger nonce = count.getTransactionCount();
-            BigDecimal reserved = jdbc.queryForObject("select max(nonce_value) from chain_submission where scope_key=?", BigDecimal.class, scope);
+            BigDecimal reserved = jdbc.queryForObject("select max(nonce_value) from chain_submission where "+routing.all("created_at")+" and scope_key=?", BigDecimal.class, scope);
             if (reserved != null) nonce = nonce.max(reserved.toBigIntegerExact().add(BigInteger.ONE));
             RawTransaction raw = RawTransaction.createTransaction(nonce, DefaultGasProvider.GAS_PRICE,
                     DefaultGasProvider.GAS_LIMIT, properties.getContractAddress(), BigInteger.ZERO, data);
@@ -77,9 +79,11 @@ public class ChainTransactionService {
             String hash = Hash.sha3(signed);
             BigDecimal storedNonce = new BigDecimal(nonce);
             // 必须先提交凭据再广播；外层业务回滚也不能丢失已签名交易。
+            java.sql.Timestamp created=routing.now();
+            routing.register("chain-request",key,created);routing.register("chain-hash",hash,created);
             jdbc.update("insert into chain_submission "
-                            + "(request_key,scope_key,nonce_value,payload_hash,tx_hash,raw_tx,state) values (?,?,?,?,?,?,'PREPARED')",
-                    key, scope, storedNonce, payload, hash, signed);
+                            + "(request_key,scope_key,nonce_value,payload_hash,tx_hash,raw_tx,state,created_at) values (?,?,?,?,?,?,'PREPARED',?)",
+                    key, scope, storedNonce, payload, hash, signed,created);
             return new Submission(hash, signed, payload, "PREPARED");
         });
         if ("CONFIRMED".equals(submission.state)) return submission.hash;
@@ -89,7 +93,7 @@ public class ChainTransactionService {
 
     /** 仅由管理员入口调用；恢复保存的原交易，不生成新的签名或nonce。 */
     public synchronized String resume(String hash) throws Exception {
-        List<Submission> rows = jdbc.query("select * from chain_submission where tx_hash=?", (rs, n) ->
+        List<Submission> rows = jdbc.query("select * from chain_submission where "+routing.at("chain-hash",hash)+" and tx_hash=?", (rs, n) ->
                 new Submission(rs.getString("tx_hash"), rs.getString("raw_tx"), rs.getString("payload_hash"), rs.getString("state")), hash);
         if (rows.isEmpty()) throw new IllegalArgumentException("未找到交易凭据");
         if ("CONFIRMED".equals(rows.get(0).state)) return hash;
@@ -98,7 +102,7 @@ public class ChainTransactionService {
     }
 
     public List<java.util.Map<String, Object>> listRecent() {
-        return jdbc.queryForList("select tx_hash,state,ledger_applied,nonce_value from chain_submission order by nonce_value desc limit 50");
+        return jdbc.queryForList("select tx_hash,state,ledger_applied,nonce_value from chain_submission where "+routing.all("created_at")+" order by nonce_value desc limit 50");
     }
 
     private String confirm(Web3j web3j, Submission submission, boolean broadcast) throws Exception {
@@ -150,7 +154,7 @@ public class ChainTransactionService {
     }
 
     private void setState(String hash, String state) {
-        independent.executeWithoutResult(status -> jdbc.update("update chain_submission set state=? where tx_hash=? and state not in ('CONFIRMED','FAILED')", state, hash));
+        independent.executeWithoutResult(status -> jdbc.update("update chain_submission set state=? where "+routing.at("chain-hash",hash)+" and tx_hash=? and state not in ('CONFIRMED','FAILED')", state, hash));
     }
 
     private static class Submission {

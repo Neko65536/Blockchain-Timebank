@@ -9,5 +9,6 @@ CREATE TABLE IF NOT EXISTS chain_submission (
   raw_tx TEXT NOT NULL,
   state VARCHAR(16) NOT NULL,
   ledger_applied SMALLINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uk_chain_nonce UNIQUE (scope_key, nonce_value)
 );

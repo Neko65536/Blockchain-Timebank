@@ -7,7 +7,38 @@
 - A项当前文件脱敏：安全报告移除姓名、学号；方案PDF移除封面团队编号、作者及XML元数据，并将第82～84页的6张人物照片替换为隐私说明。保留85页、原图注及参考文献，不删除公开文献作者信息。
 - A项验证：PDF可重新打开，85页保持不变；未修改页面的提取文字与拉取版本完全一致；目标编号不再出现、作者/XML元数据为空、无附件、6张人物照片不再作为图片对象出现在对应页面；已渲染检查封面和照片页；`git diff --check`通过。仅修改文档，没有变更后端业务代码，因此本阶段不重复运行业务测试。
 - 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
-- A、B项已提交至本地`dec8efd`。C项滑动窗口限流、查询计划核验和索引迁移已完成，见下节；后续按字母顺序推进D项，当前未实现分库分表、联盟链迁移或Agent，也没有新增性能数字。
+- A、B项提交为`dec8efd`，C项提交为`148f21b`。D项在`feature/sharding`分支实现单MySQL数据源内的按月分表，见下节；尚未实现多数据库分片、联盟链迁移或Agent，也没有新增性能数字。
+
+## D项按月分表实施与验证（2026-11-16）
+
+本轮使用ShardingSphere-JDBC5.3.2、Spring Boot2.6.13和Java11，保留默认非分片模式，通过`sharding`profile显式启用。实际验证发现Boot默认SnakeYAML1.29缺少`setCodePointLimit`，已固定为ShardingSphere所用的1.33；Maven优先中央仓库，OSGeo仍供原地理依赖使用。
+
+相对规划的必要调整：outbox和chain_submission原来没有创建时间，UUID也不能推出月份，所以无法“业务代码零改动”。已补齐时间列与路由目录，改造受理、查询、重试、消费、回执恢复及入账SQL。当前只有一个物理数据源`ds`，三个金融业务表按月拆表，共享原数据库本地事务；没有启用多数据源、XA或跨库余额双写。`user/activity`按广播规则配置，但单数据源下仍各只有一份，不代表已验证多库广播一致性。
+
+- 分片表：`settlement_order_yyyyMM`、`settlement_outbox_yyyyMM`、`chain_submission_yyyyMM`；使用`created_at`与内置`INTERVAL`算法，默认预留`202601`～`202612`，不改UUID。结算与outbox显式写入同一秒级时间，配置binding group，关联查询增加创建时间相等条件，避免跨月份错误组合。
+- `shard_locator`是非分片的全局目录，以类型＋查询键为主键，保存UUID、幂等请求键或交易哈希对应的原创建时间；目录与实体在同一事务提交，失败一并回滚。目录也为相同类型的请求键提供跨月唯一约束。查询原结算/回执使用目录得到的时间路由，不用当前月份猜测；客户端传原UUID即可。
+- 列表、活动关联核验、outbox扫描、兼容历史请求键查找及nonce最大值查询，显式限定在全部已配置月份范围；仍会扫描该范围内多个分片，未实现用户传入月份过滤、历史归档或消除列表逐条加载。签名账户仍使用非分片`chain_signer`行锁，nonce根据保留范围内的最大值分配；未声称链吞吐提升。
+- 范围采用`SHARDING_START`包含、`SHARDING_END`不包含的月份，最多120个月。新写入超出范围直接拒绝；启动时验证物理表存在，并拒绝目录中存在配置范围外的历史记录。所有实例的JVM、JDBC连接与数据库会话须使用一致时区，例如Asia/Shanghai；INTERVAL本身不代替时区治理。
+- 旧非分片库升级时给outbox补创建时间并从对应结算回填；旧链凭据没有可靠创建时间，新增列保留NULL，不把部署时间伪装为交易历史。非分片业务继续可用；启用分片时如果逻辑模板表仍有记录，会拒绝启动，避免静默隐藏已付款记录。
+
+启用步骤（使用新建的独立MySQL库，不直接指向已有业务库）：
+
+1. 设置`SHARDING_JDBC_URL`、`DB_USERNAME`、`DB_PASSWORD`和原有`JWT_SECRET`等配置，JDBC URL指定正确时区；启动profile为`sharding`，本地中间件端口仍通过`REDIS_PORT/RABBITMQ_PORT`提供。
+2. 首次设置`SHARDING_INITIALIZE=true`：先运行原有MySQL结构初始化与迁移，再创建目录，并按`SHARDING_START=2026-01`、`SHARDING_END=2027-01`为三个表预建12个月物理表。只克隆空逻辑模板的结构，不复制历史行。数据库本身须提前创建。
+3. 建表后改回`SHARDING_INITIALIZE=false`运行；每次启动都会校验模板表为空、目录范围和目标物理表存在。扩大月份范围时，先用初始化模式预建新表再统一更新全部实例配置，保留旧月份。后续字段/索引升级必须覆盖已有物理表，`CREATE TABLE ... LIKE`不会迁移已经存在的分片结构。
+4. 默认`dev`及原中间件测试继续使用非分片数据源；不要把`dev`和`sharding`混用。链、模型和MQ开关沿用原配置，分片profile不会自动开启真实链或提供模型密钥。
+
+分片键取舍：按月有利于时间段查询、预建与后续归档，但当前月份形成写热点；ID取模更利于均匀写入，却不利于按时间归档，时间查询也更容易散到多个分片。UUID不含月份，目录查询是保持旧API与跨月幂等所需的额外成本。单库分表不突破单MySQL实例的资源上限，目录和签名锁仍是集中访问点；本项未作容量或性能达标声明。
+
+历史迁移与双写流程是操作设计，**没有实现自动双写迁移工具**：先备份并冻结金融写入，核对所有已签名和待确认交易；为缺失时间的历史凭据建立可审计的映射，再按原时间复制记录，保持UUID、幂等键、原交易字节、哈希、nonce和入账标记不变，同时构建目录。逐月核对行数、金额汇总、请求键唯一性、order/outbox配对和链凭据，切换前处理差异。若将来采用不停写迁移，应先在原事务写迁移outbox，以幂等消费者增量复制、追平并双读比对，短暂冻结最终切换；不能直接让请求线程分别写两库后声称一致。切换后回滚需先反向追平增量，不能简单切回旧profile。当前程序拒绝带数据的逻辑模板；离线迁移完成后应将原表保留在只读备份中，并在新库保留空模板，禁止为绕过检查直接删除原业务数据。
+
+本项统一验证使用独立MySQL8.0.46、Redis7和RabbitMQ3.13：完整回归73项通过、2项条件测试跳过（外部broker重启和MySQL专用EXPLAIN），见`backend/timecoin-web/target/d-final-tests.log`。6项分片专项覆盖1月/2月真实物理表、跨月同键返回原单、绑定表查询、目录与业务回滚、旧月消费只入账一次、跨月复用签名与nonce递增、越界月份拒绝及启动拒绝遗漏历史/未迁移数据。补充真实RabbitMQ跨月派发后6项再次通过，见`d-sharding-mq-tests.log`；旧非分片MySQL升级联调10项通过、1项重启演练跳过，见`d-mysql-upgrade-tests.log`。链RPC仍为测试替身，不代表实链或多库XA验证。
+
+复现：先在独立MySQL3307创建`timebank_sharding_test`，启动原独立Redis6380/RabbitMQ5673；测试使用已有本地测试账户配置。执行`mvn -o -f backend/pom.xml test '-Dp1.integration=true' '-Dsharding.integration=true'`；仅运行分片专项可再加`'-Dtest=ShardingIntegrationTests' '-Dsurefire.failIfNoSpecifiedTests=false'`。不传`sharding.integration=true`时跳过分片专项，常规测试仍不分片。测试会清理专用库的月表和专用MQ队列，勿指向业务环境。
+
+最终执行`mvn -o -f backend/pom.xml package '-Dp1.integration=true' '-Dsharding.integration=true'`成功，73项通过、2项条件测试跳过，生成可执行后端JAR；证据为`d-package-tests.log`。本项没有前端改动，不重复前端构建。
+
+配置依据：[ShardingSphere5.3.2分片规则](https://shardingsphere.apache.org/document/5.3.2/en/user-manual/shardingsphere-jdbc/java-api/rules/sharding/)、[INTERVAL算法参数](https://shardingsphere.apache.org/document/5.3.2/en/user-manual/common-config/builtin-algorithm/sharding/)。日志及构建产物保留在target，不新增开发说明文档。
 
 ## C项高并发设计补强（2026-11-16）
 

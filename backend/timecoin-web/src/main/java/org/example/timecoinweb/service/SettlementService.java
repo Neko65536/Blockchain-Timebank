@@ -30,16 +30,18 @@ public class SettlementService {
     private final VolMapper volunteers;
     private final BlockchainProperties blockchain;
     private final ObjectMapper json;
+    private final org.example.timecoinweb.config.ShardRouting routing;
     @Value("${settlement.max-attempts:8}") private int maxAttempts;
     @Value("${settlement.lease-ms:180000}") private long leaseMs;
     @Value("${settlement.retry-ms:5000}") private long retryMs;
 
     public SettlementService(JdbcTemplate jdbc, PlatformTransactionManager manager, TimeCoinChainService chain,
                              CoinBalanceLedgerService ledger, ActivityMapper activities, VolMapper volunteers,
-                             BlockchainProperties blockchain, ObjectMapper json) {
+                             BlockchainProperties blockchain, ObjectMapper json, org.example.timecoinweb.config.ShardRouting routing) {
         this.jdbc = jdbc; this.transaction = new TransactionTemplate(manager); this.chain = chain;
         this.ledger = ledger; this.activities = activities; this.volunteers = volunteers;
         this.blockchain = blockchain; this.json = json;
+        this.routing = routing;
     }
 
     public Map<String, Object> submitTransfer(int owner, String requestId, String type, String from, String to, BigInteger amount) {
@@ -101,7 +103,7 @@ public class SettlementService {
     }
 
     public boolean hasReward(int activityId, int volId) {
-        return jdbc.queryForObject("select count(*) from settlement_order where biz_type='VOLUNTEER_REWARD' and activity_id=? and volunteer_id=?",
+        return jdbc.queryForObject("select count(*) from settlement_order where "+routing.all("created_at")+" and biz_type='VOLUNTEER_REWARD' and activity_id=? and volunteer_id=?",
                 Integer.class, activityId, volId) > 0;
     }
 
@@ -113,14 +115,14 @@ public class SettlementService {
 
     public void requireActivityMutable(Activity activity) {
         if (activity == null) throw new IllegalArgumentException("活动不存在");
-        int count = jdbc.queryForObject("select count(*) from settlement_order where activity_id=? and "
+        int count = jdbc.queryForObject("select count(*) from settlement_order where "+routing.all("created_at")+" and activity_id=? and "
                         + "(biz_type='VOLUNTEER_REWARD' or state<>'SUCCEEDED')", Integer.class, activity.getId());
         if (activity.getStatus() == 0 || count > 0) throw new IllegalStateException("该活动关联结算，不能修改或删除，请核查结算状态");
     }
 
     public List<Map<String, Object>> list(int viewer, boolean admin) {
-        String where = admin ? "" : " where owner_id=?";
-        List<String> ids = admin ? jdbc.queryForList("select id from settlement_order order by created_at desc limit 100", String.class)
+        String where = " where "+routing.all("created_at")+(admin ? "" : " and owner_id=?");
+        List<String> ids = admin ? jdbc.queryForList("select id from settlement_order"+where+" order by created_at desc limit 100", String.class)
                 : jdbc.queryForList("select id from settlement_order" + where + " order by created_at desc limit 100", String.class, viewer);
         List<Map<String, Object>> result = new ArrayList<>();
         for (String id : ids) result.add(view(load(id)));
@@ -129,11 +131,11 @@ public class SettlementService {
 
     public Map<String, Object> retry(String id) {
         return transaction.execute(tx -> {
-            jdbc.queryForList("select id from settlement_order where id=? for update", id);
+            jdbc.queryForList("select id from settlement_order where "+routing.at("order",id)+" and id=? for update", id);
             Order order = load(id);
             if ("REVIEW".equals(order.state)) {
-                jdbc.update("update settlement_order set state='RETRY',attempts=0,next_attempt=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP where id=?", id);
-                jdbc.update("update settlement_outbox set next_send=CURRENT_TIMESTAMP where order_id=?", id);
+                jdbc.update("update settlement_order set state='RETRY',attempts=0,next_attempt=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP where "+routing.at("order",id)+" and id=?", id);
+                jdbc.update("update settlement_outbox set next_send=CURRENT_TIMESTAMP where "+routing.at("order",id)+" and order_id=?", id);
             }
             return view(load(id));
         });
@@ -143,7 +145,7 @@ public class SettlementService {
     public void process(String id) {
         String lease = UUID.randomUUID().toString();
         int claimed = jdbc.update("update settlement_order set state='PROCESSING',lease_token=?,lease_until=?,attempts=attempts+1,updated_at=CURRENT_TIMESTAMP "
-                        + "where id=? and ((state in ('PENDING','RETRY') and next_attempt<=CURRENT_TIMESTAMP) or (state='PROCESSING' and lease_until<CURRENT_TIMESTAMP))",
+                        + "where "+routing.at("order",id)+" and id=? and ((state in ('PENDING','RETRY') and next_attempt<=CURRENT_TIMESTAMP) or (state='PROCESSING' and lease_until<CURRENT_TIMESTAMP))",
                 lease, Timestamp.from(Instant.now().plusMillis(leaseMs)), id);
         if (claimed == 0) return;
         Order order = load(id);
@@ -156,7 +158,7 @@ public class SettlementService {
                 // 与报名操作统一锁顺序，防止支付入账与取消/状态修改交错。
                 Activity activity = order.activityId == null ? null : activities.lockById(order.activityId);
                 VolActivity volunteer = order.volunteerId == null ? null : volunteers.lockVolunteerActivityRow(order.activityId, order.volunteerId);
-                jdbc.queryForList("select id from settlement_order where id=? for update", id);
+                jdbc.queryForList("select id from settlement_order where "+routing.at("order",id)+" and id=? for update", id);
                 Order current = load(id);
                 if (!"PROCESSING".equals(current.state) || !lease.equals(current.leaseToken)) return;
                 if (order.activityId != null && activity == null) throw new IllegalStateException("结算活动不存在");
@@ -173,12 +175,12 @@ public class SettlementService {
                     if (activity.getStatus() != 0) throw new IllegalStateException("待扣费活动状态异常");
                     jdbc.update("update activity set status=1,update_time=CURRENT_TIMESTAMP where id=?", order.activityId);
                 }
-                jdbc.update("update settlement_order set state='SUCCEEDED',tx_hash=?,last_error=null,lease_token=null,lease_until=null,updated_at=CURRENT_TIMESTAMP where id=?", hash, id);
+                jdbc.update("update settlement_order set state='SUCCEEDED',tx_hash=?,last_error=null,lease_token=null,lease_until=null,updated_at=CURRENT_TIMESTAMP where "+routing.at("order",id)+" and id=?", hash, id);
             });
         } catch (Exception failure) {
             String error = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
             long delay = Math.min(300000L, retryMs * (1L << Math.min(order.attempts - 1, 6)));
-            jdbc.update("update settlement_order set state=?,last_error=?,next_attempt=?,lease_token=null,lease_until=null,updated_at=CURRENT_TIMESTAMP where id=? and lease_token=?",
+            jdbc.update("update settlement_order set state=?,last_error=?,next_attempt=?,lease_token=null,lease_until=null,updated_at=CURRENT_TIMESTAMP where "+routing.at("order",id)+" and id=? and lease_token=?",
                     order.attempts >= maxAttempts ? "REVIEW" : "RETRY", error.substring(0, Math.min(500, error.length())),
                     Timestamp.from(Instant.now().plusMillis(delay)), id, lease);
         }
@@ -187,9 +189,11 @@ public class SettlementService {
     private Order insert(int owner, String key, String payload, String type, String from, String to, BigInteger amount, Integer activity, Integer volunteer) {
         String id = UUID.randomUUID().toString();
         String state = amount.signum() == 0 ? "SUCCEEDED" : "PENDING";
-        jdbc.update("insert into settlement_order(id,request_key,payload_hash,owner_id,biz_type,from_user,to_user,amount,activity_id,volunteer_id,state) values (?,?,?,?,?,?,?,?,?,?,?)",
-                id, key, payload, owner, type, from, to, amount.longValueExact(), activity, volunteer, state);
-        if (amount.signum() > 0) jdbc.update("insert into settlement_outbox(order_id) values (?)", id);
+        Timestamp created=routing.now();
+        routing.register("order",id,created);routing.register("order-request",key,created);
+        jdbc.update("insert into settlement_order(id,request_key,payload_hash,owner_id,biz_type,from_user,to_user,amount,activity_id,volunteer_id,state,created_at) values (?,?,?,?,?,?,?,?,?,?,?,?)",
+                id, key, payload, owner, type, from, to, amount.longValueExact(), activity, volunteer, state,created);
+        if (amount.signum() > 0) jdbc.update("insert into settlement_outbox(order_id,created_at) values (?,?)", id,created);
         return load(id);
     }
 
@@ -197,7 +201,7 @@ public class SettlementService {
         if (jdbc.queryForList("select id from `user` where id=? for update", owner).isEmpty()) throw new IllegalArgumentException("用户不存在");
     }
     private Order findRequest(String key, String payload) {
-        List<String> ids = jdbc.queryForList("select id from settlement_order where request_key=?", String.class, key);
+        List<String> ids = jdbc.queryForList("select id from settlement_order where "+routing.at("order-request",key)+" and request_key=?", String.class, key);
         if (ids.isEmpty()) return null;
         Order previous = load(ids.get(0));
         if (!previous.payloadHash.equals(payload)) throw new IllegalArgumentException("同一请求编号不能修改业务参数");
@@ -229,7 +233,7 @@ public class SettlementService {
         throw new IllegalArgumentException("收付款账户不存在");
     }
     Order load(String id) {
-        List<Order> rows = jdbc.query("select * from settlement_order where id=?", (rs, n) -> {
+        List<Order> rows = jdbc.query("select * from settlement_order where "+routing.at("order",id)+" and id=?", (rs, n) -> {
             Order o = new Order(); o.id = rs.getString("id"); o.payloadHash = rs.getString("payload_hash"); o.ownerId = rs.getInt("owner_id");
             o.bizType = rs.getString("biz_type"); o.fromUser = rs.getString("from_user"); o.toUser = rs.getString("to_user"); o.amount = rs.getLong("amount");
             o.activityId = (Integer) rs.getObject("activity_id"); o.volunteerId = (Integer) rs.getObject("volunteer_id");

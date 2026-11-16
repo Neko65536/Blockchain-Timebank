@@ -29,17 +29,18 @@ public class SettlementDispatcher {
     private final JdbcTemplate jdbc;
     private final RabbitTemplate rabbit;
     private final SettlementService settlements;
+    private final org.example.timecoinweb.config.ShardRouting routing;
 
     /** confirm仅表示broker接收；未完成订单仍定期重投，覆盖发布后崩溃、broker恢复等窗口。 */
     @Scheduled(fixedDelayString = "${settlement.dispatch-ms:1000}", initialDelayString = "${settlement.dispatch-initial-ms:1000}")
     public void dispatch() {
-        List<String> ids = jdbc.queryForList("select o.order_id from settlement_outbox o join settlement_order s on s.id=o.order_id "
-                + "where o.next_send<=CURRENT_TIMESTAMP and ((s.state in ('PENDING','RETRY') and s.next_attempt<=CURRENT_TIMESTAMP) "
+        List<String> ids = jdbc.queryForList("select o.order_id from settlement_outbox o join settlement_order s on s.id=o.order_id"+routing.bindingCondition()
+                + "where "+routing.all("o.created_at")+" and "+routing.all("s.created_at")+" and o.next_send<=CURRENT_TIMESTAMP and ((s.state in ('PENDING','RETRY') and s.next_attempt<=CURRENT_TIMESTAMP) "
                 + "or (s.state='PROCESSING' and s.lease_until<CURRENT_TIMESTAMP)) order by o.next_send limit 10", String.class);
         for (String id : ids) {
             try {
                 publish(id);
-                jdbc.update("update settlement_outbox set confirmed_at=CURRENT_TIMESTAMP,send_count=send_count+1,next_send=? where order_id=?",
+                jdbc.update("update settlement_outbox set confirmed_at=CURRENT_TIMESTAMP,send_count=send_count+1,next_send=? where "+routing.at("order",id)+" and order_id=?",
                         Timestamp.from(Instant.now().plusSeconds(5)), id);
             } catch (Exception e) {
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();

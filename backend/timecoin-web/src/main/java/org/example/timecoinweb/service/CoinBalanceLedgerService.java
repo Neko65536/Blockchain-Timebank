@@ -40,6 +40,7 @@ public class CoinBalanceLedgerService {
     private final BlockchainProperties blockchainProperties;
     private final ObjectMapper objectMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final org.example.timecoinweb.config.ShardRouting routing;
 
     @Transactional(rollbackFor = Exception.class)
     public void recordMint(String userId, BigInteger amount, String txHash, String bizType, String bizRef) {
@@ -191,12 +192,12 @@ public class CoinBalanceLedgerService {
     private boolean claimReceipt(String txHash) {
         // 同一回执串行入账；标记与台账更新属于同一本地事务。
         java.util.List<java.util.Map<String, Object>> receipts = jdbc.queryForList(
-                "select state, ledger_applied from chain_submission where tx_hash=? for update", txHash);
+                "select state, ledger_applied from chain_submission where "+routing.at("chain-hash",txHash)+" and tx_hash=? for update", txHash);
         if (receipts.isEmpty() || !"CONFIRMED".equals(receipts.get(0).get("state"))) {
             throw new IllegalStateException("交易尚未确认，禁止更新余额台账");
         }
         if (((Number) receipts.get(0).get("ledger_applied")).intValue() == 1) return false;
-        jdbc.update("update chain_submission set ledger_applied=1 where tx_hash=?", txHash);
+        jdbc.update("update chain_submission set ledger_applied=1 where "+routing.at("chain-hash",txHash)+" and tx_hash=?", txHash);
         return true;
     }
 

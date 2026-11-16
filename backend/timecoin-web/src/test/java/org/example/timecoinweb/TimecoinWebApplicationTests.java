@@ -53,6 +53,7 @@ class TimecoinWebApplicationTests {
     @Autowired BlockchainProperties blockchain;
     @Autowired TimeCoinChainService chain;
     @Autowired ChainTransactionService submissions;
+    @Autowired org.example.timecoinweb.config.ShardRouting routing;
     @Autowired org.example.timecoinweb.service.SettlementService settlements;
     @MockBean(answer = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
 
@@ -321,7 +322,7 @@ class TimecoinWebApplicationTests {
         mined.set(true);
         ChainTransactionService restarted = new ChainTransactionService(jdbc,
                 new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()),
-                blockchain, provider(web3j), provider(Credentials.create("1")));
+                blockchain, provider(web3j), provider(Credentials.create("1")), routing);
         assertEquals(hash, restarted.resume(hash));
         assertEquals("SUCCEEDED", completeAndProcess(change));
         assertEquals(10L, balance(2));
@@ -567,7 +568,7 @@ class TimecoinWebApplicationTests {
         mockChain(new AtomicBoolean(true), false);
         ChainTransactionService second = new ChainTransactionService(jdbc,
                 new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()),
-                blockchain, provider(web3j), provider(Credentials.create("1")));
+                blockchain, provider(web3j), provider(Credentials.create("1")), routing);
         concurrently(i -> {
             try { (i % 2 == 0 ? submissions : second).send("0x", "multi-instance:" + i); }
             catch (Exception e) { throw new RuntimeException(e); }
