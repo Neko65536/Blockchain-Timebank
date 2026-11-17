@@ -29,6 +29,8 @@ public class ChainTransactionService {
     private final ObjectProvider<Web3j> clients;
     private final ObjectProvider<Credentials> credentials;
     private final org.example.timecoinweb.config.ShardRouting routing;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ObjectProvider<FiscoTransactionService> fisco;
 
     public ChainTransactionService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                    BlockchainProperties properties, ObjectProvider<Web3j> clients,
@@ -43,7 +45,12 @@ public class ChainTransactionService {
     }
 
     // 实例内串行确认降低节点压力；跨实例依靠chain_signer行锁分配nonce。
-    public synchronized String send(String data, String businessKey) throws Exception {
+    public String send(String data, String businessKey) throws Exception {
+        if (properties.isFisco()) return fisco.getObject().send(data,businessKey);
+        return sendEthereum(data,businessKey);
+    }
+
+    private synchronized String sendEthereum(String data,String businessKey) throws Exception {
         Web3j web3j = clients.getObject();
         Credentials signer = credentials.getObject();
         EthChainId chain = web3j.ethChainId().send();
@@ -93,16 +100,18 @@ public class ChainTransactionService {
 
     /** 仅由管理员入口调用；恢复保存的原交易，不生成新的签名或nonce。 */
     public synchronized String resume(String hash) throws Exception {
+        if (properties.isFisco()) return fisco.getObject().resume(hash);
         List<Submission> rows = jdbc.query("select * from chain_submission where "+routing.at("chain-hash",hash)+" and tx_hash=?", (rs, n) ->
                 new Submission(rs.getString("tx_hash"), rs.getString("raw_tx"), rs.getString("payload_hash"), rs.getString("state")), hash);
         if (rows.isEmpty()) throw new IllegalArgumentException("未找到交易凭据");
+        if (rows.get(0).raw.startsWith("{")) throw new IllegalStateException("该凭据使用其他链协议，请恢复原配置");
         if ("CONFIRMED".equals(rows.get(0).state)) return hash;
         if ("FAILED".equals(rows.get(0).state)) throw new IllegalStateException("该交易已执行失败");
         return confirm(clients.getObject(), rows.get(0), true);
     }
 
     public List<java.util.Map<String, Object>> listRecent() {
-        return jdbc.queryForList("select tx_hash,state,ledger_applied,nonce_value from chain_submission where "+routing.all("created_at")+" order by nonce_value desc limit 50");
+        return jdbc.queryForList("select tx_hash,state,ledger_applied,nonce_value,created_at from chain_submission where "+routing.all("created_at")+" order by created_at desc limit 50");
     }
 
     private String confirm(Web3j web3j, Submission submission, boolean broadcast) throws Exception {

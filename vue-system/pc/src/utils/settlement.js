@@ -27,5 +27,5 @@ export async function postSettlement(url, payload) {
 }
 
 export function settlementState(state) {
-  return ({ PENDING: '等待处理', PROCESSING: '正在处理', RETRY: '等待重试', SUCCEEDED: '已完成', REVIEW: '需管理员核查' })[state] || state;
+  return ({ MULTISIG: '等待多签审批', PENDING: '等待处理', PROCESSING: '正在处理', RETRY: '等待重试', SUCCEEDED: '已完成', REVIEW: '需管理员核查' })[state] || state;
 }

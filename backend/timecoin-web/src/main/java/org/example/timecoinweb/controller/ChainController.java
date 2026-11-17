@@ -34,6 +34,30 @@ public class ChainController {
     private org.example.timecoinweb.service.ChainTransactionService chainTransactionService;
     @Autowired
     private org.example.timecoinweb.service.SettlementService settlements;
+    @Autowired
+    private org.example.timecoinweb.service.GovernanceService governance;
+    @Autowired
+    private org.example.timecoinweb.config.BlockchainProperties blockchain;
+
+    @GetMapping("/governance")
+    public Result proposals() { return Result.success(governance.list()); }
+
+    @PostMapping("/governance/freeze")
+    public Result freeze(@RequestBody FreezeBody body,@RequestHeader("token") String token,@RequestHeader("Idempotency-Key") String request) {
+        if(body==null || body.frozen==null) throw new IllegalArgumentException("必须指定账户和冻结状态");
+        return Result.success(governance.proposeFreeze((Integer)org.example.utils.JwtUtils.parseJWT(token).get("id"),request,body.userId,body.frozen));
+    }
+
+    @PostMapping("/governance/{id}/approve")
+    public Result approve(@PathVariable String id,@RequestBody ApprovalBody body,@RequestHeader("token") String token) {
+        return Result.success(governance.approve(id,body.signature,(Integer)org.example.utils.JwtUtils.parseJWT(token).get("id")));
+    }
+
+    @PostMapping("/governance/{id}/execute")
+    public Result execute(@PathVariable String id) throws Exception {return Result.success(governance.executeFreeze(id));}
+
+    @Data public static class FreezeBody {private String userId;private Boolean frozen;}
+    @Data public static class ApprovalBody {private String signature;}
 
     @GetMapping("/settlements")
     public Result settlements() { return Result.success(settlements.list(0, true)); }
@@ -67,6 +91,7 @@ public class ChainController {
     public Result status() {
         Map<String, Object> m = new HashMap<>();
         m.put("ready", timeCoinChainService.isChainReady());
+        m.put("governanceEnabled", blockchain.isGovernanceEnabled());
         if (!timeCoinChainService.isChainReady()) {
             m.put("reason", timeCoinChainService.getNotReadyReason());
         }

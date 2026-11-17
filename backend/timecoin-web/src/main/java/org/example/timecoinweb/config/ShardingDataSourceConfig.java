@@ -49,6 +49,9 @@ public class ShardingDataSourceConfig {
                 for(YearMonth month=first;month.isBefore(last);month=month.plusMonths(1)) {
                     String name=table+"_"+month.format(DateTimeFormatter.ofPattern("yyyyMM"));
                     if(initialize) jdbc.execute("create table if not exists "+name+" like "+table);
+                    if(initialize && "chain_submission".equals(table)
+                            && jdbc.queryForObject("select count(*) from information_schema.COLUMNS where TABLE_SCHEMA=DATABASE() and TABLE_NAME=? and COLUMN_NAME='nonce_value' and IS_NULLABLE='NO'",Integer.class,name)>0)
+                        jdbc.execute("alter table "+name+" modify column nonce_value decimal(20,0) null");
                     jdbc.queryForList("select created_at from "+name+" limit 0");
                     nodes.add("ds."+name);
                 }

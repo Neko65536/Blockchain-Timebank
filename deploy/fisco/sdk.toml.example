@@ -1,0 +1,10 @@
+[cryptoMaterial]
+certPath = "/run/fisco-sdk"
+[network]
+peers = ["127.0.0.1:20250"]
+[account]
+# 不配置业务operator或审批人的账户文件；SDK临时账户只用于只读调用。
+keyStoreDir = "/tmp/fisco-unused-account"
+accountFileFormat = "pem"
+[threadPool]
+threadPoolSize = "4"

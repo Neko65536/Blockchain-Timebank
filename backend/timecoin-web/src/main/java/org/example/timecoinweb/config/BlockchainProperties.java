@@ -15,6 +15,19 @@ public class BlockchainProperties {
     /** 为 false 时不连接节点，链相关接口返回明确提示 */
     private boolean enabled = false;
 
+    /** ethereum保留历史凭据恢复；fisco使用独立签名进程。 */
+    private String backend = "ethereum";
+    private String fiscoConfig = "";
+    private String groupId = "group0";
+    private String expectedChainId = "chain0";
+    private String signerAddress = "";
+    private String signerUrl = "http://127.0.0.1:8443/v1/sign";
+    private String signerToken = "";
+    private boolean governanceEnabled = false;
+    private long proposalLifetimeSeconds = 86400;
+
+    public boolean isFisco() { return "fisco".equals(backend); }
+
     private String rpcUrl = "http://127.0.0.1:8545/";
 
     /** 部署后的 TimeCoin 合约地址（0x...），与 TimeCoinSystem/constants.js 或 hardhat-deploy 输出一致 */

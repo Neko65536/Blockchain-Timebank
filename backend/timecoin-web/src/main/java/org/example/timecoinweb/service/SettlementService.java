@@ -31,6 +31,8 @@ public class SettlementService {
     private final BlockchainProperties blockchain;
     private final ObjectMapper json;
     private final org.example.timecoinweb.config.ShardRouting routing;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<GovernanceService> governance;
     @Value("${settlement.max-attempts:8}") private int maxAttempts;
     @Value("${settlement.lease-ms:180000}") private long leaseMs;
     @Value("${settlement.retry-ms:5000}") private long retryMs;
@@ -176,6 +178,7 @@ public class SettlementService {
                     jdbc.update("update activity set status=1,update_time=CURRENT_TIMESTAMP where id=?", order.activityId);
                 }
                 jdbc.update("update settlement_order set state='SUCCEEDED',tx_hash=?,last_error=null,lease_token=null,lease_until=null,updated_at=CURRENT_TIMESTAMP where "+routing.at("order",id)+" and id=?", hash, id);
+                if(blockchain.isGovernanceEnabled() && "ADMIN_MINT".equals(order.bizType)) governance.getObject().completeMint(id,hash);
             });
         } catch (Exception failure) {
             String error = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
@@ -188,12 +191,14 @@ public class SettlementService {
 
     private Order insert(int owner, String key, String payload, String type, String from, String to, BigInteger amount, Integer activity, Integer volunteer) {
         String id = UUID.randomUUID().toString();
-        String state = amount.signum() == 0 ? "SUCCEEDED" : "PENDING";
+        boolean multi=blockchain.isGovernanceEnabled() && "ADMIN_MINT".equals(type);
+        String state = amount.signum() == 0 ? "SUCCEEDED" : multi ? "MULTISIG" : "PENDING";
         Timestamp created=routing.now();
         routing.register("order",id,created);routing.register("order-request",key,created);
         jdbc.update("insert into settlement_order(id,request_key,payload_hash,owner_id,biz_type,from_user,to_user,amount,activity_id,volunteer_id,state,created_at) values (?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, key, payload, owner, type, from, to, amount.longValueExact(), activity, volunteer, state,created);
-        if (amount.signum() > 0) jdbc.update("insert into settlement_outbox(order_id,created_at) values (?,?)", id,created);
+        if(multi) governance.getObject().createMint(id,owner,to,amount.longValueExact());
+        else if (amount.signum() > 0) jdbc.update("insert into settlement_outbox(order_id,created_at) values (?,?)", id,created);
         return load(id);
     }
 

@@ -4,6 +4,10 @@
 *.lst
 
 # Local build, credentials and editor artifacts
+/deploy/fisco/local/
+/deploy/secrets/
+/TimeCoinSystem/artifacts/
+/TimeCoinSystem/cache/
 **/target/
 **/node_modules/
 **/dist/

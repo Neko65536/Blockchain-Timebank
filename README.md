@@ -7,7 +7,56 @@
 - A项当前文件脱敏：安全报告移除姓名、学号；方案PDF移除封面团队编号、作者及XML元数据，并将第82～84页的6张人物照片替换为隐私说明。保留85页、原图注及参考文献，不删除公开文献作者信息。
 - A项验证：PDF可重新打开，85页保持不变；未修改页面的提取文字与拉取版本完全一致；目标编号不再出现、作者/XML元数据为空、无附件、6张人物照片不再作为图片对象出现在对应页面；已渲染检查封面和照片页；`git diff --check`通过。仅修改文档，没有变更后端业务代码，因此本阶段不重复运行业务测试。
 - 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
-- A、B项提交为`dec8efd`，C项提交为`148f21b`。D项在`feature/sharding`分支实现单MySQL数据源内的按月分表，见下节；尚未实现多数据库分片、联盟链迁移或Agent，也没有新增性能数字。
+- A、B项提交为`dec8efd`，C项提交为`148f21b`，D项提交为`8a59ab6`。E及后续项在`codex/remaining-efg`分支推进；各项实际验收范围见下文。没有实现多数据库分片或Agent，不能将规划内容写成已交付功能。
+
+## E项联盟链、独立签名与管理多签（2026-11-17）
+
+新增FISCO BCOS3.8.0非国密EVM适配，使用Java SDK3.8.0；上层转账、发币、余额查询和结算API保持兼容。以太坊分支仍用于旧凭据恢复和已有回归，Web3j的ABI编码也继续复用，不能表述为“彻底删除Web3j”。FISCO选择`fisco`配置，业务进程不加载operator私钥；证书用于节点TLS连接，与交易私钥分开。
+
+**本地节点与职责。** `deploy/fisco/bootstrap.sh`调用官方固定版本脚本生成4节点，RPC为20250～20253、P2P为30350～30353，全部绑定回环地址。通过链治理委员会提案将node3转为观察节点，验证3个共识节点＋1个观察节点。观察节点不参与投票，不能把这一拓扑宣称为“容忍一个恶意共识节点”：PBFT的`3f+1`按共识节点计算；要演示`f=1`应使用4个共识节点。四进程同机也不代表跨主机高可用。K3S部署属于F项，不能用本地进程测试替代集群验证。
+
+**交易可靠性。** `FiscoTransactionService`按业务键互斥，调用signer后验证签名载荷的链、群组、目标、参数、哈希与区块有效期，再以独立事务保存原交易，最后广播。FISCO使用SDK生成的随机nonce，不参与以太坊的递增nonce分配；`nonce_value`为NULL，随机nonce保存在原始签名交易中，历史以太坊nonce不修改。逻辑表和既有月表的可空迁移随初始化执行；禁用初始化的库必须在维护窗口预先迁移。
+
+恢复先查询原哈希，已确认则直接复用；回执未知只允许有效期内重播同一签名，不能重新签名。FISCO3.8.0的未知哈希和部分存储错误都可能返回查询异常，因此异常不等于“未执行”。过期且无法核实回执时保留凭据并转人工核查；业务订单按既有重试次数进入`REVIEW`。明确的链上revert才将凭据标为`FAILED`。区块通知合并后在独立线程唤醒只读对账，5秒最多执行一轮；原定时对账继续补偿断线，通知不直接改余额。事件页从最新区块回扫，最多10000块，超限明确报错；它不是生产历史事件索引。
+
+**独立signer。** 用户选定自建进程方案，不使用云KMS。`SignerMain`不启动Spring、不连接数据库、不广播交易，私钥仅从`SIGNER_KEY_FILE`读取；后端只持有调用token与预期签名地址。请求限定链、群组、合约和函数选择器，限制正文大小、线程数、队列与并发；没有任意摘要签名或部署入口。跨主机监听必须配置TLS，客户端使用JVM信任库并禁止重定向；回环地址允许HTTP供本机测试。独立进程减少业务代码直接读取私钥的范围，但不等同HSM：宿主机管理员仍可读取文件/内存，业务服务失陷仍可能滥用允许的转账函数。生产需独立系统账户、只读密钥挂载、网络隔离及调用审计；当前是本地工程验证。
+
+| 进程 | 必填配置 |
+|---|---|
+| 后端`fisco`profile | `FISCO_CONFIG`、`FISCO_GROUP_ID`、`FISCO_CHAIN_ID`、`BLOCKCHAIN_CONTRACT_ADDRESS`、`SIGNER_ADDRESS`、`SIGNER_URL`、`SIGNER_TOKEN`，以及原数据库/JWT/Redis/MQ配置 |
+| signer | `SIGNER_KEY_FILE`、`SIGNER_TOKEN`（至少32字节）、`SIGNER_CHAIN_ID`、`SIGNER_GROUP_ID`、`SIGNER_CONTRACT`、`SIGNER_SELECTORS=9b80b050,0a875551` |
+| signer监听 | 默认`SIGNER_HOST=127.0.0.1`、`SIGNER_PORT=8443`；非回环须设置`SIGNER_TLS_KEYSTORE`（PKCS12）、`SIGNER_TLS_PASSWORD`；调用端配置可信CA |
+| 运维部署 | `FISCO_DEPLOY_KEY_FILE`、`FISCO_CONFIG`、`FISCO_GROUP_ID`、`FISCO_CHAIN_ID`、`FISCO_CONTRACT_ARTIFACT`、`SIGNER_ADDRESS`、`GOVERNANCE_APPROVERS`（独立地址逗号分隔）、`GOVERNANCE_THRESHOLD`、`GOVERNANCE_DEPLOYMENT_ID`、`FISCO_DEPLOY_RECEIPT_FILE`（必须是新文件） |
+
+SDK配置模板在`deploy/fisco/sdk.toml.example`。节点证书、signer私钥、审批人私钥和部署管理员私钥职责不同，不能把同一个文件挂载到所有进程。测试使用临时密钥及本地演示链；不要复用测试管理员账户。
+
+```bash
+# 在TimeCoinSystem执行npm ci及npx hardhat test后构建后端
+mvn -f backend/pom.xml package
+# 环境变量就绪后，独立启动signer；不要使用java -jar启动业务主类
+java -Dloader.main=org.example.timecoinweb.signer.SignerMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher
+# 单独运维进程部署新合约，输出地址并保存部署前的原始凭据
+java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher deploy
+# observer子命令另需FISCO_OBSERVER_NODEID_FILE；权限模式下通过委员提案执行
+java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher observer
+java -jar backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar --spring.profiles.active=fisco
+```
+
+**管理多签与冻结。** 新合约`GovernedTimeCoin`将operator和审批人分离，审批阈值至少2，审批人不得重复或等于operator。管理操作使用独立审批人的`personal_sign`签名；摘要绑定部署域、合约地址、提案ID、动作、账户、数值和期限。合约校验签名顺序、low-s、不同审批人、阈值、期限及提案防重放。发币数量限正数且不超过64位台账范围；冻结阻止该账户发币及双向转账，解冻也要多签。用户转账仍由后端operator代发，不声称用户持有链钱包或自行签交易。
+
+管理员发币创建`MULTISIG`结算单与治理提案，不创建outbox；收齐有效签名后同一事务将订单改为`PENDING`并插入outbox，后续沿用可靠结算。冻结提案达到`READY`后由管理员执行，结果不明时恢复原提案。PC时间币页新增提案、冻结/解冻和提交签名入口；每个审批人应独立核对参数和摘要，页面不接收私钥。FISCO合约`block.timestamp`使用毫秒，以太坊使用秒，提案期限按后端协议计算并在真实链测试中核验。
+
+管理API（均需管理员token）：`GET /administrator/chain/governance`；`POST /governance/freeze`提交`userId,frozen`及`Idempotency-Key`；`POST /governance/{id}/approve`提交`signature`；`POST /governance/{id}/execute`执行已审批冻结。后三者省略的前缀均为`/administrator/chain`。发币仍使用原`/mint`接口；审批签名可以由任一管理员转交，但必须来自合约认可的不同审批密钥，不能用管理员登录次数代替多签。
+
+**升级治理。** 不实现计划中未经核实的“同地址覆盖部署”。[官方说明](https://github.com/FISCO-BCOS/FISCO-BCOS-DOC/blob/release-3/3.x/zh_CN/docs/key_concepts.md)指出重新部署产生新地址和独立存储。当前采用维护窗口流程：停止新写入→清点全部未决结算/原链凭据→导出并核验余额→部署新版本→记录版本、Git提交、ABI/字节码摘要、地址、部署哈希及审批记录→验证新链后切换配置。旧凭据必须在原链/原合约配置下恢复；不能直接切地址重试旧订单。新合约没有代理升级或自动余额迁移，旧余额不会自动出现。链部署权限应由独立治理委员管理，使用权限模式的部署白名单及版本审批；业务signer白名单不允许部署。链级委员会审批和业务合约多签是两套权限，不能相互替代。
+
+**演示积分与隐私规则。** 本系统时间币用于封闭服务记账，不提供提现、法币兑换、投资收益或对外交易接口；这只是产品范围，不能据此宣称已取得金融或运营合规认定。链上记录业务userId、金额、交易与冻结事件，姓名、电话、地址等资料留在受控数据库；userId能关联数据库个人信息，属于可关联标识，不是不可复原的匿名化数据。[个人信息保护法官方文本](https://www.miit.gov.cn/jgsj/zfs/fl/art/2022/art_515a4b20c12f430eab54bb4f56d89f56.html)区分去标识化与匿名化。
+
+本地演示只使用合成用户与资料；使用真实资料前需确定处理目的、必要字段、用户告知、授权范围、访问和删除渠道以及最短保存期限。链节点和备份均限制访问，数据库与节点快照分开管理，恢复后核查结算/台账/链余额。链上历史不能保证逐条删除，注销时应停止非必要处理并按实际要求处理链下映射、日志和备份；不得承诺“删除数据库即删除所有链上信息”。当前没有自动留存清理、协议版本同意记录、第三方合约审计、等保或备案，不用于真实运营背书。
+
+验证命令：普通回归`mvn -f backend/pom.xml test`；本地真实链显式增加`-Dfisco.integration=true -Dtest.fisco-config=target/fisco-local/sdk.toml`。节点成员切换验证另传`test.fisco-observer-file`和`test.fisco-admin-keyfile`，仅对自己的回环测试链执行。测试部署独立合约并启动独立signer子进程，证书、临时密钥、原始日志均留在忽略的`target/`，不上传GitHub。
+
+本大项集中验证结果：后端85项，83项通过、2项跳过（未启用外部RabbitMQ重启演练和MySQL专用EXPLAIN），覆盖真实Redis/RabbitMQ、MySQL分片以及FISCO；`package`成功，日志`backend/timecoin-web/target/e-final-tests.log`。合约6项通过，日志`e-contract-tests.log`；PC构建通过，日志`e-pc-build.log`（保留原有体积告警）。新增测试覆盖签名策略、不同审批人/重复签名、MULTISIG到outbox原子放行、冻结、重放/跨合约攻击、过期交易禁止重签、错误回执及链上revert。真实链测试在独立signer子进程中签名，模拟节点执行后响应丢失，重试后仅2条凭据（1次发币＋1次转账）、收款余额9；测试合约`0x0662b023d9f87a06cecb053702e9c77510f1056f`，转账哈希`0x6eed4cbae2996db11bc013a0addc19fa57fe2ca57ed6dadff7fa0c53f24f65c3`。这是本地功能证据，不是性能或生产可用性指标。
 
 ## D项按月分表实施与验证（2026-11-16）
 

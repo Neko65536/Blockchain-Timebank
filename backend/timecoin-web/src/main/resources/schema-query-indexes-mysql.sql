@@ -1,4 +1,8 @@
 -- 已有库也执行索引迁移；按名称判断存在性，不依赖CREATE TABLE IF NOT EXISTS。
+SET @nonce_ddl := (SELECT IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='chain_submission' AND COLUMN_NAME='nonce_value' AND IS_NULLABLE='NO'),'ALTER TABLE chain_submission MODIFY COLUMN nonce_value DECIMAL(20,0) NULL','SELECT 1'));
+PREPARE nonce_stmt FROM @nonce_ddl;
+EXECUTE nonce_stmt;
+DEALLOCATE PREPARE nonce_stmt;
 -- 旧链凭据无可追溯时间，不以当前时间伪造历史创建时间。
 SET @shard_ddl := (SELECT IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='chain_submission' AND COLUMN_NAME='created_at'),'SELECT 1','ALTER TABLE chain_submission ADD COLUMN created_at TIMESTAMP NULL'));
 PREPARE shard_stmt FROM @shard_ddl;

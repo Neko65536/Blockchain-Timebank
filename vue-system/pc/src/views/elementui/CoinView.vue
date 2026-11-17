@@ -38,6 +38,7 @@
     </div>
 
     <SettlementList ref="settlements" admin />
+    <GovernancePanel />
     <div class="dashboard">
       <h2>链上流通总量（各用户余额之和）: {{ totalCirculatingDisplay }}</h2>
       <div class="summary">
@@ -174,11 +175,12 @@
 <script>
 import { postSettlement } from '@/utils/settlement';
 import SettlementList from '@/components/SettlementList.vue';
+import GovernancePanel from '@/components/GovernancePanel.vue';
 import * as echarts from 'echarts';
 import request from '@/utils/request';
 
 export default {
-  components: { SettlementList },
+  components: { SettlementList, GovernancePanel },
   name: 'CoinView',
   data() {
     return {

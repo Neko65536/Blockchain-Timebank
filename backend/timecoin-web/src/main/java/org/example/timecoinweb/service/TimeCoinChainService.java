@@ -51,6 +51,10 @@ public class TimeCoinChainService {
     private final UserMapper userMapper;
     private final ObjectProvider<CoinBalanceLedgerService> coinBalanceLedgerProvider;
     private final ChainTransactionService chainTransactionService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ObjectProvider<org.fisco.bcos.sdk.v3.client.Client> fiscoProvider;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ObjectProvider<GovernanceService> governance;
 
     private String getUserNameOrDefault(String userIdStr, String defaultValue) {
         if (!StringUtils.hasText(userIdStr) || "平台".equals(userIdStr)) {
@@ -78,6 +82,7 @@ public class TimeCoinChainService {
         if (!StringUtils.hasText(blockchainProperties.getContractAddress())) {
             return false;
         }
+        if (blockchainProperties.isFisco()) return fiscoProvider.getIfAvailable()!=null;
         return web3jProvider.getIfAvailable() != null
                 && credentialsProvider.getIfAvailable() != null;
     }
@@ -89,6 +94,7 @@ public class TimeCoinChainService {
         if (!StringUtils.hasText(blockchainProperties.getContractAddress())) {
             return "未配置合约地址（blockchain.contract-address），请先部署 TimeCoin 并填写";
         }
+        if (blockchainProperties.isFisco()) return "FISCO客户端未就绪，请检查证书、链和群组配置";
         if (web3jProvider.getIfAvailable() == null) {
             return "Web3j 未初始化（请设置 blockchain.enabled=true 且配置私钥）";
         }
@@ -112,6 +118,10 @@ public class TimeCoinChainService {
         requireReady();
         String normalizedUserId = requireUserId(userId, "userId");
         BigInteger validAmount = requirePositiveAmount(amount);
+        if(blockchainProperties.isGovernanceEnabled()) {
+            if(!"ADMIN_MINT".equals(bizType) || !StringUtils.hasText(bizRef)) throw new IllegalArgumentException("管理发币必须关联已审批的结算提案");
+            return chainTransactionService.send(governance.getObject().mintCalldata(bizRef,normalizedUserId,validAmount),businessKey(bizType,bizRef));
+        }
         Function function = new Function(
                 "mint",
                 Arrays.asList(new Utf8String(normalizedUserId), new Uint256(validAmount)),
@@ -168,18 +178,27 @@ public class TimeCoinChainService {
                 }));
 
         String encoded = FunctionEncoder.encode(function);
+        String value;
+        if(blockchainProperties.isFisco()) {
+            org.fisco.bcos.sdk.v3.client.protocol.response.Call.CallOutput output=fiscoProvider.getObject().call(
+                    new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(blockchainProperties.getSignerAddress(),contract,Numeric.hexStringToByteArray(encoded))).getCallResult();
+            if(output==null || output.getStatus()!=0) throw new IllegalStateException("FISCO余额查询失败");
+            value=output.getOutput();
+        } else {
         EthCall response = web3j.ethCall(
                 org.web3j.protocol.core.methods.request.Transaction.createEthCallTransaction(
                         credentials.getAddress(), contract, encoded),
                 DefaultBlockParameterName.LATEST).send();
 
-        String value = response.getValue();
+        if(response.hasError() || response.isReverted()) throw new IllegalStateException("链上余额查询失败");
+        value = response.getValue();
+        }
         if (value == null || "0x".equals(value) || value.isEmpty()) {
-            return BigInteger.ZERO;
+            throw new IllegalStateException("链上余额响应为空，请检查合约地址");
         }
         List<Type> decoded = FunctionReturnDecoder.decode(value, function.getOutputParameters());
         if (decoded.isEmpty()) {
-            return BigInteger.ZERO;
+            throw new IllegalStateException("链上余额响应无法解码");
         }
         return (BigInteger) decoded.get(0).getValue();
     }
@@ -188,6 +207,26 @@ public class TimeCoinChainService {
         if (!isChainReady()) {
             throw new IllegalStateException(getNotReadyReason());
         }
+    }
+
+    public List<Type> callView(Function function) throws Exception {
+        requireReady();
+        String encoded=FunctionEncoder.encode(function), value;
+        if(blockchainProperties.isFisco()) {
+            org.fisco.bcos.sdk.v3.client.protocol.response.Call.CallOutput output=fiscoProvider.getObject().call(
+                    new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(blockchainProperties.getSignerAddress(),blockchainProperties.getContractAddress(),Numeric.hexStringToByteArray(encoded))).getCallResult();
+            if(output==null || output.getStatus()!=0) throw new IllegalStateException("FISCO合约查询失败");
+            value=output.getOutput();
+        } else {
+            EthCall output=web3jProvider.getObject().ethCall(org.web3j.protocol.core.methods.request.Transaction.createEthCallTransaction(
+                    credentialsProvider.getObject().getAddress(),blockchainProperties.getContractAddress(),encoded),DefaultBlockParameterName.LATEST).send();
+            if(output.hasError() || output.isReverted()) throw new IllegalStateException("合约查询失败");
+            value=output.getValue();
+        }
+        if(value==null || value.isEmpty() || "0x".equals(value)) throw new IllegalStateException("合约响应为空");
+        List<Type> decoded=FunctionReturnDecoder.decode(value,function.getOutputParameters());
+        if(decoded.size()!=function.getOutputParameters().size()) throw new IllegalStateException("合约响应不完整");
+        return decoded;
     }
 
     private static String requireUserId(String userId, String fieldName) {
@@ -277,7 +316,11 @@ public class TimeCoinChainService {
         }
         Web3j web3j = web3jProvider.getIfAvailable();
         String contract = blockchainProperties.getContractAddress();
-
+        List<Log> logs = new ArrayList<>();
+        Map<BigInteger, Long> blockTsCache = new HashMap<>();
+        if(blockchainProperties.isFisco()) {
+            loadFiscoLogs(limit,logs,blockTsCache);
+        } else {
         EthFilter filter = new EthFilter(
                 DefaultBlockParameterName.EARLIEST,
                 DefaultBlockParameterName.LATEST,
@@ -293,9 +336,9 @@ public class TimeCoinChainService {
             return Collections.emptyList();
         }
 
-        List<Log> logs = new ArrayList<>();
         for (EthLog.LogResult<?> lr : raw) {
             logs.add((Log) lr.get());
+        }
         }
         logs.sort(Comparator
                 .comparing(Log::getBlockNumber, Comparator.nullsFirst(Comparator.naturalOrder()))
@@ -305,7 +348,6 @@ public class TimeCoinChainService {
             logs = new ArrayList<>(logs.subList(0, limit));
         }
 
-        Map<BigInteger, Long> blockTsCache = new HashMap<>();
         List<Map<String, Object>> out = new ArrayList<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 .withZone(ZoneId.of("Asia/Shanghai"));
@@ -398,7 +440,7 @@ public class TimeCoinChainService {
             String parties = (String) event.get("parties");
             
             if ("MINT".equals(type)) {
-                if (parties != null && parties.contains("用户 " + userId)) {
+                if (parties != null && parties.equals("平台 → 用户 " + userId)) {
                     Map<String, Object> copy = new HashMap<>(event);
                     copy.put("direction", "IN");
                     copy.put("counterparty", "平台");
@@ -474,5 +516,34 @@ public class TimeCoinChainService {
         }
         
         return result;
+    }
+
+    /** 从最新区块回扫；演示查询有明确上限，不能伪装成完整历史索引。 */
+    private void loadFiscoLogs(int limit,List<Log> logs,Map<BigInteger,Long> timestamps) {
+        org.fisco.bcos.sdk.v3.client.Client client=fiscoProvider.getObject();
+        BigInteger current=client.getBlockNumber().getBlockNumber();
+        int scanned=0;
+        while(current.signum()>=0 && logs.size()<limit) {
+            if(++scanned>10000) throw new IllegalStateException("事件查询超过10000区块，请使用离线索引查询历史");
+            org.fisco.bcos.sdk.v3.client.protocol.response.BcosBlock.Block block=client.getBlockByNumber(current,false,true).getBlock();
+            if(block==null) throw new IllegalStateException("FISCO区块查询失败");
+            timestamps.put(current,block.getTimestamp()/1000);
+            int index=0;
+            for(org.fisco.bcos.sdk.v3.client.protocol.response.BcosBlock.TransactionHash hash:block.getTransactionHashes()) {
+                org.fisco.bcos.sdk.v3.model.TransactionReceipt receipt=client.getTransactionReceipt(hash.get(),false).getTransactionReceipt();
+                if(receipt==null) throw new IllegalStateException("FISCO事件回执缺失");
+                if(receipt.getStatus()!=0) continue;
+                for(org.fisco.bcos.sdk.v3.model.TransactionReceipt.Logs entry:receipt.getLogEntries()) {
+                    int logIndex=index++;
+                    if(!blockchainProperties.getContractAddress().equalsIgnoreCase(entry.getAddress()) || entry.getTopics()==null || entry.getTopics().isEmpty()) continue;
+                    String topic=entry.getTopics().get(0);
+                    if(!TOPIC_MINT.equalsIgnoreCase(topic)&&!TOPIC_TRANSFER.equalsIgnoreCase(topic)) continue;
+                    Log event=new Log();event.setAddress(entry.getAddress());event.setTopics(entry.getTopics());event.setData(entry.getData());
+                    event.setTransactionHash(hash.get());event.setBlockNumber(Numeric.encodeQuantity(current));event.setLogIndex(Numeric.encodeQuantity(BigInteger.valueOf(logIndex)));
+                    logs.add(event);
+                }
+            }
+            current=current.subtract(BigInteger.ONE);
+        }
     }
 }
