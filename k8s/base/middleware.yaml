@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  clusterIP: None
+  selector: {app: redis}
+  ports: [{name: redis, port: 6379, targetPort: 6379}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 999, runAsGroup: 999, fsGroup: 999}
+      containers:
+        - name: redis
+          image: redis:7.2.16
+          command: [sh, -ec]
+          args: ['exec redis-server --appendonly yes --appendfsync everysec --requirepass "$REDIS_PASSWORD"']
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: timebank-secrets, key: redis-password}}
+            - name: REDISCLI_AUTH
+              valueFrom: {secretKeyRef: {name: timebank-secrets, key: redis-password}}
+          ports: [{containerPort: 6379}]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: '1', memory: 512Mi}}
+          readinessProbe: {exec: {command: [redis-cli, ping]}, initialDelaySeconds: 3, periodSeconds: 5}
+          livenessProbe: {exec: {command: [redis-cli, ping]}, initialDelaySeconds: 20, periodSeconds: 10}
+          volumeMounts: [{name: data, mountPath: /data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: rabbitmq}
+spec:
+  clusterIP: None
+  selector: {app: rabbitmq}
+  ports: [{name: amqp, port: 5672, targetPort: 5672}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: rabbitmq}
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector: {matchLabels: {app: rabbitmq}}
+  template:
+    metadata: {labels: {app: rabbitmq}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 999, runAsGroup: 999, fsGroup: 999}
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.13-alpine
+          # kubelet挂载PVC时会按fsGroup扩展权限；Erlang要求cookie仅所有者可读。
+          command: [sh, -ec]
+          args: ['if [ -f /var/lib/rabbitmq/.erlang.cookie ]; then chmod 600 /var/lib/rabbitmq/.erlang.cookie; fi; exec docker-entrypoint.sh rabbitmq-server']
+          env:
+            - {name: RABBITMQ_DEFAULT_USER, value: timebank}
+            - {name: RABBITMQ_DEFAULT_PASS, valueFrom: {secretKeyRef: {name: timebank-secrets, key: rabbit-password}}}
+            - {name: RABBITMQ_ERLANG_COOKIE, valueFrom: {secretKeyRef: {name: timebank-secrets, key: rabbit-cookie}}}
+          ports: [{containerPort: 5672}]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 200m, memory: 256Mi}, limits: {cpu: '1', memory: 768Mi}}
+          startupProbe: {exec: {command: [rabbitmq-diagnostics, -q, ping]}, periodSeconds: 5, failureThreshold: 36, timeoutSeconds: 5}
+          readinessProbe: {exec: {command: [rabbitmq-diagnostics, -q, check_port_connectivity]}, periodSeconds: 10, timeoutSeconds: 5}
+          livenessProbe: {exec: {command: [rabbitmq-diagnostics, -q, ping]}, periodSeconds: 20, timeoutSeconds: 5}
+          volumeMounts: [{name: data, mountPath: /var/lib/rabbitmq}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mysql}
+spec:
+  clusterIP: None
+  selector: {app: mysql}
+  ports: [{name: mysql, port: 3306, targetPort: 3306}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: mysql}
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector: {matchLabels: {app: mysql}}
+  template:
+    metadata: {labels: {app: mysql}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 999, runAsGroup: 999, fsGroup: 999}
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - {name: MYSQL_DATABASE, value: timecoin}
+            - {name: MYSQL_USER, value: timebank}
+            - {name: MYSQL_PASSWORD, valueFrom: {secretKeyRef: {name: timebank-secrets, key: db-password}}}
+            - {name: MYSQL_ROOT_PASSWORD, valueFrom: {secretKeyRef: {name: timebank-secrets, key: db-root-password}}}
+          ports: [{containerPort: 3306}]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 200m, memory: 512Mi}, limits: {cpu: '2', memory: 1Gi}}
+          startupProbe: {tcpSocket: {port: 3306}, periodSeconds: 5, failureThreshold: 60}
+          readinessProbe: {exec: {command: [sh, -ec, 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -h127.0.0.1 -utimebank -Dtimecoin -Nse "SELECT 1"']}, periodSeconds: 10, timeoutSeconds: 5}
+          livenessProbe: {tcpSocket: {port: 3306}, periodSeconds: 10}
+          volumeMounts: [{name: data, mountPath: /var/lib/mysql}, {name: runtime, mountPath: /var/run/mysqld}]
+      volumes: [{name: runtime, emptyDir: {}}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}

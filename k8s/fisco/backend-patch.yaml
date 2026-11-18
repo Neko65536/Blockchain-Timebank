@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: backend}
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          command: [sh, -ec]
+          args: ['exec java -Djavax.net.ssl.trustStore=/run/signer-ca/truststore.p12 "-Djavax.net.ssl.trustStorePassword=$TRUSTSTORE_PASSWORD" -jar /app/app.jar']
+          envFrom:
+            - {configMapRef: {name: backend-config}}
+            - {configMapRef: {name: fisco-runtime}}
+          env:
+            - {name: SPRING_PROFILES_ACTIVE, value: fisco}
+            - {name: BLOCKCHAIN_ENABLED, value: 'true'}
+            - {name: SIGNER_TOKEN, valueFrom: {secretKeyRef: {name: signer-auth, key: token}}}
+            - {name: TRUSTSTORE_PASSWORD, valueFrom: {secretKeyRef: {name: signer-client-trust, key: password}}}
+          volumeMounts:
+            - {name: fisco-sdk, mountPath: /run/fisco-sdk, readOnly: true}
+            - {name: signer-ca, mountPath: /run/signer-ca, readOnly: true}
+      volumes:
+        - {name: fisco-sdk, secret: {secretName: fisco-sdk, defaultMode: 288}}
+        - {name: signer-ca, secret: {secretName: signer-client-trust, defaultMode: 288}}

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata: {name: node}
+spec:
+  selector: {app: fisco}
+  ports:
+    - {name: rpc, port: 20200, targetPort: 20200}
+    - {name: p2p, port: 30300, targetPort: 30300}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: node}
+spec:
+  serviceName: node
+  replicas: 1
+  # 四个独立StatefulSet必须由运维逐节点更新，避免同时重启丢失共识。
+  updateStrategy: {type: OnDelete, rollingUpdate: null}
+  selector: {matchLabels: {app: fisco}}
+  template:
+    metadata: {labels: {app: fisco}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: fisco
+          image: timebank-fisco:3.10.0
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 20200}, {containerPort: 30300}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: '1', memory: 768Mi}}
+          startupProbe: {tcpSocket: {port: 20200}, periodSeconds: 5, failureThreshold: 36}
+          readinessProbe: {tcpSocket: {port: 20200}, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: 20200}, periodSeconds: 10}
+          volumeMounts: [{name: config, mountPath: /config, readOnly: true}, {name: data, mountPath: /data}]
+      volumes: [{name: config, secret: {secretName: node-config, defaultMode: 288}}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}

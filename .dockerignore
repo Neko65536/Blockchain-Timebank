@@ -1,0 +1,6 @@
+**
+!backend/
+!backend/timecoin-web/
+!backend/timecoin-web/target/
+!backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar
+!backend/Dockerfile

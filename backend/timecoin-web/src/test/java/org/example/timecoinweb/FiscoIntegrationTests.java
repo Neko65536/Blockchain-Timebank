@@ -28,6 +28,17 @@ import static org.mockito.Mockito.*;
 /** 显式开启；只允许127.0.0.1测试链，生成临时密钥、部署独立合约，真实启动signer子进程。 */
 @EnabledIfSystemProperty(named="fisco.integration",matches="true")
 class FiscoIntegrationTests {
+    @Test
+    @EnabledIfSystemProperty(named="test.fisco-existing-contract",matches="0x[0-9a-fA-F]{40}")
+    void existingContractSurvivesNodeRestarts() throws Exception {
+        BcosSDK sdk=BcosSDK.build(System.getProperty("test.fisco-config"));
+        try {
+            Client client=sdk.getClient("group0");
+            Function function=new Function("currentTime",List.of(),List.of(new TypeReference<Uint256>(){}));
+            var result=client.call(new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(System.getProperty("test.fisco-operator"),System.getProperty("test.fisco-existing-contract"),Numeric.hexStringToByteArray(FunctionEncoder.encode(function)))).getCallResult();
+            assertEquals(0,result.getStatus());assertFalse(FunctionReturnDecoder.decode(result.getOutput(),function.getOutputParameters()).isEmpty());
+        } finally {sdk.stopAll();}
+    }
     @Test void realChainAndSeparateSignerPreserveReceiptAcrossLostResponse() throws Exception {
         Path config=Path.of(System.getProperty("test.fisco-config"));
         String configText=Files.readString(config);

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata: {name: signer}
+spec:
+  selector: {app: signer}
+  ports: [{name: https, port: 8443, targetPort: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: signer-only-backend}
+spec:
+  podSelector: {matchLabels: {app: signer}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: backend}}}]
+      ports: [{protocol: TCP, port: 8443}]
+  egress: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: signer}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: signer}}
+  template:
+    metadata: {labels: {app: signer}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: signer
+          image: timebank-backend:local
+          imagePullPolicy: IfNotPresent
+          command: [java, -Dloader.main=org.example.timecoinweb.signer.SignerMain, -Dsun.net.httpserver.maxReqTime=15, -Dsun.net.httpserver.maxRspTime=15, -cp, /app/app.jar, org.springframework.boot.loader.PropertiesLauncher]
+          envFrom: [{configMapRef: {name: fisco-runtime}}]
+          env:
+            - {name: SIGNER_HOST, value: '0.0.0.0'}
+            - {name: SIGNER_KEY_FILE, value: /run/operator/operator.key}
+            - {name: SIGNER_TOKEN, valueFrom: {secretKeyRef: {name: signer-auth, key: token}}}
+            - {name: SIGNER_TLS_KEYSTORE, value: /run/server-tls/server.p12}
+            - {name: SIGNER_TLS_PASSWORD, valueFrom: {secretKeyRef: {name: signer-server-tls, key: password}}}
+            - {name: JAVA_TOOL_OPTIONS, value: '-XX:MaxRAMPercentage=60 -Dfile.encoding=UTF-8'}
+          ports: [{containerPort: 8443}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: '1', memory: 384Mi}}
+          startupProbe: {tcpSocket: {port: 8443}, periodSeconds: 3, failureThreshold: 30}
+          readinessProbe: {tcpSocket: {port: 8443}, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: 8443}, periodSeconds: 10}
+          volumeMounts:
+            - {name: operator, mountPath: /run/operator, readOnly: true}
+            - {name: tls, mountPath: /run/server-tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: logs, mountPath: /app/log}
+            - {name: home, mountPath: /home/timebank}
+      volumes:
+        - {name: operator, secret: {secretName: signer-key, defaultMode: 288}}
+        - {name: tls, secret: {secretName: signer-server-tls, defaultMode: 288}}
+        - {name: tmp, emptyDir: {}}
+        - {name: logs, emptyDir: {}}
+        - {name: home, emptyDir: {}}

@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: backend-config}
+data:
+  SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/timecoin?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true'
+  SPRING_DATASOURCE_USERNAME: timebank
+  REDIS_HOST: redis
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: timebank
+  BLOCKCHAIN_ENABLED: 'false'
+  AI_RAG_EMBEDDING_MODE: local-hash
+  AI_RAG_ANSWER_MODE: extractive
+  APP_UPLOAD_IMAGE_DIR: /app/data/image
+  JAVA_TOOL_OPTIONS: '-XX:MaxRAMPercentage=65 -Dfile.encoding=UTF-8'
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: backend-uploads}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: backend}
+spec:
+  selector: {app: backend}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: backend}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: backend}}
+  template:
+    metadata: {labels: {app: backend}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: backend
+          image: timebank-backend:local
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: backend-config}}]
+          env:
+            - {name: DB_PASSWORD, valueFrom: {secretKeyRef: {name: timebank-secrets, key: db-password}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: timebank-secrets, key: jwt-secret}}}
+            - {name: REDIS_PASSWORD, valueFrom: {secretKeyRef: {name: timebank-secrets, key: redis-password}}}
+            - {name: RABBITMQ_PASSWORD, valueFrom: {secretKeyRef: {name: timebank-secrets, key: rabbit-password}}}
+          ports: [{containerPort: 8080}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: '2', memory: 1Gi}}
+          startupProbe: {tcpSocket: {port: 8080}, periodSeconds: 5, failureThreshold: 36}
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: 8080}, periodSeconds: 10}
+          volumeMounts: [{name: uploads, mountPath: /app/data}, {name: tmp, mountPath: /tmp}, {name: logs, mountPath: /app/log}, {name: home, mountPath: /home/timebank}]
+      volumes:
+        - {name: uploads, persistentVolumeClaim: {claimName: backend-uploads}}
+        - {name: tmp, emptyDir: {}}
+        - {name: logs, emptyDir: {}}
+        - {name: home, emptyDir: {}}

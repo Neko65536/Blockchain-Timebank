@@ -9,6 +9,36 @@
 - 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
 - A、B项提交为`dec8efd`，C项提交为`148f21b`，D项提交为`8a59ab6`。E及后续项在`codex/remaining-efg`分支推进；各项实际验收范围见下文。没有实现多数据库分片或Agent，不能将规划内容写成已交付功能。
 
+## F项容器与Kubernetes部署（2026-11-18）
+
+`backend/Dockerfile`提供Java11非root镜像；`k8s/base`包含后端、MySQL、Redis、RabbitMQ及各自PVC/Service，凭据通过Secret注入。`k8s/fisco`叠加4个独立节点和TLS签名服务。业务进程不挂载operator私钥，signer仅允许backend访问8443且禁止出站；节点证书、SDK证书、签名私钥、服务端TLS与客户端信任库分别挂载。Secret本身不是HSM，应配合集群静态加密、RBAC和宿主机权限管理。
+
+部署顺序（在仓库根目录使用Linux命令，镜像需导入K3S的containerd或推送到可访问的镜像仓库）：
+
+```sh
+mvn -f backend/pom.xml package
+docker build -t timebank-backend:local -f backend/Dockerfile .
+# 下载官方3.10.0 Linux二进制并解压到deploy/fisco/local/fisco-bcos
+docker build -t timebank-fisco:3.10.0 deploy/fisco
+kubectl apply -f k8s/base/namespace.yaml
+# 将k8s/secrets.env.example复制到deploy/secrets/，填写各自随机密码和JWT密钥
+kubectl -n timebank create secret generic timebank-secrets --from-env-file=deploy/secrets/k3s.env
+kubectl apply -k k8s/base
+# 先建立节点Service，取得P2P所需ClusterIP；节点此时等待配置Secret属预期状态
+for i in 0 1 2 3; do kubectl -n timebank apply -k k8s/fisco/node$i; done
+bash deploy/fisco/import-k8s.sh /absolute/generated/nodes/127.0.0.1 deploy/secrets/fisco-k8s timebank
+```
+
+节点配置由前述`bootstrap.sh`生成；运维部署及观察节点转换沿用E项`FiscoAdminMain`命令，SDK可通过回环port-forward连接。先部署合约，再填写`k8s/fisco/runtime.env.example`中的operator地址和合约地址，创建名为`fisco-runtime`的ConfigMap。独立生成operator私钥和审批人密钥，审批人密钥不放入集群。额外Secret约定：`signer-key`含`operator.key`；`signer-auth`含`token`；`signer-server-tls`含`server.p12`、`password`；`signer-client-trust`含`truststore.p12`、`password`。证书SAN至少包含`signer`和`signer.timebank.svc`，truststore只信任签发CA。凭据文件均放在已忽略的`deploy/secrets/`，不能提交到Git。完成后执行`kubectl apply -k k8s/fisco`，用`kubectl -n timebank port-forward --address=127.0.0.1 svc/backend 18080:8080`访问。
+
+**版本与重启修复。** E项最初使用节点3.8.0；F项实际复现其重启后查询旧合约导致退出139，独立Windows SDK同样复现。3.8执行器查询路径引用未初始化的`m_blockContext`；上游[#4487](https://github.com/FISCO-BCOS/FISCO-BCOS/pull/4487)、[#4551](https://github.com/FISCO-BCOS/FISCO-BCOS/pull/4551)修复相关访问。现在固定节点二进制3.10.0，保留数据兼容版本3.8.0及Java SDK3.8.0，未启用新EVM特性。[官方3.10兼容说明](https://github.com/FISCO-BCOS/FISCO-BCOS/releases/tag/v3.10.0)支持旧数据逐节点替换二进制。先停观察节点备份数据，再逐节点重建验证，未重新部署合约或清空PVC。各节点StatefulSet使用`OnDelete`，运维必须一次仅删除一个节点Pod并核验恢复，不同时滚动四个节点。RabbitMQ启动时修正自身cookie为0600，解决kubelet的fsGroup卷权限处理导致重建后Erlang拒绝启动的问题；禁用后端及signer的Service环境变量注入，避免自动`SIGNER_PORT=tcp://...`覆盖应用整数端口。
+
+**验收与边界。** 本地Docker内K3S v1.34.1+k3s1，单节点、单副本中间件、local-path卷，不代表高可用或跨主机容灾。后端、signer、链节点使用TCP探针，只证明端口接受连接，不保证依赖或共识可用；基础RAG默认local-hash/extractive，不声称调用真实大模型。K3S容器需稳定网络地址，WSL重启后的Docker地址重分配曾导致网络控制器启动失败，恢复原测试容器地址后恢复；正式部署应使用稳定节点网络。
+
+实测原合约`0x6849f21d1e455e9f0712b1e99fa4fcd23758e8f1`重启查询回归通过。真实链路完成两名独立审批人签名→MULTISIG转READY→RabbitMQ消费→TLS signer签名→FISCO确认→MySQL入账，结算`818ac78f-1e90-477a-9c88-c7afe56272d1`为SUCCEEDED，1次尝试，余额5，哈希`0xc7a0007760df7d7179bb74954c606f563459ef6b12d653f2fb98c4c3a304325f`。Redis重建后测试键保留，RabbitMQ重建后4个durable队列保留；这不等于已验证队列中未消费消息的断电恢复。清单通过API服务器dry-run，两个部署脚本通过`bash -n`。
+
+MySQL Pod重建后上述SUCCEEDED订单及原哈希保留。F项后端集中回归86项，76通过、10跳过（未开启分片/FISCO等外部专用开关），日志`backend/timecoin-web/target/f-final-tests.log`；另行开启的旧合约重启查询测试1项通过，日志`f-query-upgrade.log`。未将跳过项计为通过。
+
 ## E项联盟链、独立签名与管理多签（2026-11-17）
 
 新增FISCO BCOS3.8.0非国密EVM适配，使用Java SDK3.8.0；上层转账、发币、余额查询和结算API保持兼容。以太坊分支仍用于旧凭据恢复和已有回归，Web3j的ABI编码也继续复用，不能表述为“彻底删除Web3j”。FISCO选择`fisco`配置，业务进程不加载operator私钥；证书用于节点TLS连接，与交易私钥分开。
