@@ -1,13 +1,131 @@
 # 基于区块链的时间币服务系统
 
-## 改进规划执行记录（2026-11-16）
+## 改进规划执行记录（更新至2026-11-18）
 
 已同步目标仓库至`f79000f`，后续按A→B→C→D→E→F→G推进，每完成一大项后统一验证和更新现有文档。Agent部分保留规划中的“暂不实施”范围。规划中的工作量、兼容性和简历措辞需要以实际实现及验证为准。
 
 - A项当前文件脱敏：安全报告移除姓名、学号；方案PDF移除封面团队编号、作者及XML元数据，并将第82～84页的6张人物照片替换为隐私说明。保留85页、原图注及参考文献，不删除公开文献作者信息。
 - A项验证：PDF可重新打开，85页保持不变；未修改页面的提取文字与拉取版本完全一致；目标编号不再出现、作者/XML元数据为空、无附件、6张人物照片不再作为图片对象出现在对应页面；已渲染检查封面和照片页；`git diff --check`通过。仅修改文档，没有变更后端业务代码，因此本阶段不重复运行业务测试。
 - 公开发布边界：历史提交仍包含脱敏前的PDF及安全报告，本次仅清理当前文件，未修改仓库可见性，也未重写远程历史。转公开前仍须单独处理历史记录并复核；不能仅凭当前文件脱敏就判定可公开。
-- A、B项提交为`dec8efd`，C项提交为`148f21b`，D项提交为`8a59ab6`。E及后续项在`codex/remaining-efg`分支推进；各项实际验收范围见下文。没有实现多数据库分片或Agent，不能将规划内容写成已交付功能。
+- A、B项提交为`dec8efd`，C项提交为`148f21b`，D项提交为`8a59ab6`，E项为`8572809`，F项为`6f1efb0`。E至G在`codex/remaining-efg`分支交付；各项实际验收范围见下文。没有实现多数据库分片或Agent，不能将规划内容写成已交付功能。
+
+## G项压测、架构与求职证据（2026-11-18）
+
+### 可复现公告读取压测
+
+场景文件为`performance/notices.jmx`，原始257414条采样压缩保存在`performance/results/notices-16.jtl.gz`，不包含token、请求正文或个人资料；全量统计为`notices-16-statistics.json`，缓存计数差值为`notices-16-cache.json`。原JTL的SHA256为`82e5dede5aed1350178a7b429482e13ba9031cb4774b4318922e63137c226eaf`。
+
+环境：Windows11、Ryzen7 7800X3D（8核16线程），WSL2分配约15GiB；JMeter5.6.3明确使用Java11，同机通过`kubectl port-forward`访问K3S。后端1副本、CPU上限2核/内存1GiB，MySQL8.0、Redis7.2.16、RabbitMQ3.13，链和signer同时运行。数据仅1条合成公告，`GET /dashboard/notices?limit=10`，Keep-Alive、无思考时间；先4线程预热20秒，再16线程、5秒爬升、60秒测量，只有一次正式测量，不代表容量上限或稳定性测试。
+
+| 指标 | 实测值与口径 |
+|---|---|
+| 样本数/错误数 | 257414/30，包含爬升和全部失败样本 |
+| 吞吐 | 4296.97请求/秒，JMeter报告按首末样本时间跨度计算；60秒调度器摘要为4287.6请求/秒，二者计时边界不同 |
+| 平均/P95/P99 | 3.48ms/7ms/11ms，统计窗口设置为1000000以覆盖全部样本，另以全量排序复核P95/P99 |
+| 错误率 | 0.011654%，30次均为503，未剔除 |
+| 公告首次查询命中率 | 257382/257414＝99.987569%；首次未命中32次，其中2次重建、30次锁竞争，Redis降级0次 |
+
+这些数字仅适用于小数据公告缓存读取，不能外推为结算TPS、链吞吐、模型QPS或生产SLA。缓存重建时当前策略明确拒绝并发读，因此存在503；需要零错误率的业务应另行设计等待/陈旧值策略并验证一致性，不能直接删除失败样本。每次缓存读仍查数据库版本。无“优化前”对照组，不声称提升倍数。
+
+复现时先在独立测试库用管理员公告接口加入一条合成公告。下载[Apache JMeter5.6.3](https://archive.apache.org/dist/jmeter/binaries/)并核对官方SHA512，再使用Java11绝对路径执行；Windows默认PATH中的Java23曾造成Groovy断言不兼容，该次失败预热不计入正式测量。HTTP200之外还断言业务`code=1`和非空公告列表，防止空数据或业务错误被当作成功。
+
+```sh
+/path/to/java11/bin/java -jar tools/apache-jmeter-5.6.3/bin/ApacheJMeter.jar -n \
+  -t performance/notices.jmx -Jthreads=4 -Jduration=20 -Jramp=2 \
+  -l backend/timecoin-web/target/warmup.jtl -j backend/timecoin-web/target/warmup.log
+# 在无其他公告请求时，分别保存压测前后的管理员GET /administrator/notices/cache-metrics响应
+/path/to/java11/bin/java -jar tools/apache-jmeter-5.6.3/bin/ApacheJMeter.jar -n \
+  -t performance/notices.jmx -Jthreads=16 -Jduration=60 -Jramp=5 \
+  '-Jjmeter.reportgenerator.statistic_window=1000000' \
+  -l backend/timecoin-web/target/notices.jtl -j backend/timecoin-web/target/notices.log \
+  -e -o backend/timecoin-web/target/notices-report
+```
+
+每次使用新的结果路径，不追加到旧JTL；PowerShell多行使用反引号或改成单行，带点的`-J`参数整体加引号。缓存计数是单进程LongAdder累计值，进程重启归零；停止请求后取前后差值，首次GET直接命中才计hits，二次检查命中仍归为首次miss。多副本需逐实例采集并汇总，不能通过负载均衡随机读一个实例。管理员指标接口有鉴权，没有清零入口。
+
+G项集中验证：后端`package -Dp1.integration=true`共89项，79通过、10个外部专用测试跳过，日志`backend/timecoin-web/target/g-final-tests.log`；新增计数测试覆盖命中/重建、锁竞争和Redis断连降级，权限回归覆盖未登录、普通用户和管理员访问指标。JMeter场景真实运行并校验业务响应，原始失败样本与计数一致。本项未修改前端，不重复前端构建。
+
+### 架构与结算时序
+
+```mermaid
+flowchart LR
+    UI[PC与移动端] --> API[Spring Boot业务服务]
+    API --> DB[(MySQL业务库与月分片)]
+    API --> Redis[(Redis缓存与滑动窗口限流)]
+    DB --> Outbox[Outbox发布器]
+    Outbox --> MQ[RabbitMQ持久化队列]
+    MQ --> Worker[结算与RAG消费者]
+    Worker --> Signer[独立TLS signer]
+    Signer --> Key[仅signer挂载私钥]
+    Worker --> Chain[FISCO三共识一观察]
+    Chain --> Reconcile[区块通知与定时对账]
+    Reconcile --> DB
+    Worker --> Embedding[Embedding适配器]
+    API --> RAG[角色过滤与版本化检索]
+    RAG --> Model[模型端点与引用校验]
+```
+
+业务API、Outbox与消费者当前在同一Spring Boot应用，signer独立部署；没有把所有模块拆成微服务。RAG远程端点可配，实测使用离线模式与协议替身。Kubernetes部署清单与D项按月分表分别验证，当前K3S闭环未启用分片profile，不把两种测试配置混为一次联合验证。
+
+```mermaid
+sequenceDiagram
+    participant U as 调用方
+    participant A as 业务API
+    participant D as MySQL
+    participant P as Outbox发布器
+    participant Q as RabbitMQ
+    participant W as 消费者
+    participant S as 独立signer
+    participant C as FISCO
+    U->>A: Idempotency-Key与业务参数
+    A->>D: 同事务写订单与Outbox
+    Note over A,D: 管理发币先MULTISIG，达到阈值才放行Outbox
+    A-->>U: 返回结算编号，未宣称支付成功
+    P->>D: 扫描待发布记录
+    P->>Q: 持久化消息与confirm/return
+    Q->>W: 至少一次投递
+    W->>D: 抢占订单，读取原链凭据
+    alt 无原凭据
+        W->>S: 校验范围内的签名请求
+        S-->>W: 原始签名交易
+        W->>D: 独立事务持久化原交易与哈希
+    end
+    W->>C: 查询原哈希或广播同一原交易
+    C-->>W: 明确回执或未知状态
+    alt 已确认成功
+        W->>D: 同事务记台账与SUCCEEDED
+        W-->>Q: ACK
+    else 结果未知
+        W->>D: 保留原凭据，退避重试或REVIEW
+        Note over W,C: 不生成第二笔付款；过期不重签
+    end
+```
+
+### 可追问的设计说明
+
+| 问题 | 当前实现与取舍 |
+|---|---|
+| 为什么不能只用分布式锁防重复付款？ | 锁只控制一段时间内谁执行，租约失效后仍可重做。幂等键按业务主体及操作限定，同键参数变化拒绝；订单、原交易凭据和台账提供跨重试结果复用。客户端须在同一次操作重试时沿用原键。 |
+| Outbox为什么可靠？ | 业务变更与Outbox同事务避免“订单提交但消息未发”；confirm/return和轮询补偿处理投递不确定性。消息可能重复，消费者仍需幂等，不能称为端到端exactly-once。链成功但数据库未提交时按原哈希恢复。 |
+| nonce为什么曾用数据库行锁？ | 以太坊递增nonce需要跨实例分配，本地synchronized不能协调多个进程；短事务行锁分配并先持久化。FISCO改为随机nonce，不沿用递增分配表，但仍需业务键互斥及同一原交易恢复。 |
+| 版本缓存比延迟双删解决了什么？ | 公告修改与版本递增同事务，缓存键带版本，旧读回填不会覆盖新版本。每次读仍查数据库版本，允许短暂旧读；它不是数据库零访问，也不是强一致读。TTL抖动、短空值缓存和互斥重建分别处理集中到期、空结果和击穿。 |
+| 分表为何选月份？ | 结算具备时间查询与保留周期，月份便于裁剪路由和预建表；非时间入口需目录定位，跨月恢复要找到原分片。当前是单MySQL按月分表，不是多数据库水平扩容，也没有实测亿级数据。 |
+| 三共识一观察能容忍一个恶意节点吗？ | 不能。PBFT的3f+1只计共识节点，观察节点不投票；四共识才满足f=1。当前拓扑仅用于职责分离演示。 |
+| signer与多签分别保护什么？ | signer把交易私钥隔离出业务进程，并校验链、群组、合约和selector；多签要求管理操作由不同审批人批准。signer不是HSM，主机管理员仍可读密钥，允许的转账操作仍需业务权限控制。 |
+| RAG引用校验是否消除幻觉？ | 只验证引用来自检索证据且引文确实存在，不证明每句推论正确。角色过滤、版本复核、无命中拒答与线程池隔离降低越权、陈旧回答和模型拥塞风险；真实模型质量仍待单独评测。 |
+
+### 简历表述候选
+
+定位：Java后端研发，以异步结算可靠性为主线，RAG工程与联盟链治理作为补充。下列是仓库功能候选表述；使用者应能亲自解释实现与验证过程，不能把AI辅助开发直接描述为个人独立完成全部架构。
+
+- 围绕时间币异步结算，实现业务幂等、事务Outbox、RabbitMQ确认与重复消费处理，链交易先持久化再广播，结合原哈希恢复和对账处理跨系统结果不确定性。
+- 使用Redis实现Lua滑动窗口限流和版本化公告缓存；基于ShardingSphere-JDBC实现结算相关表按月分片，覆盖跨月定位与恢复测试。
+- 实现知识库异步入库、分块Embedding、按角色过滤检索及引用校验，支持远程模型配置与离线验证；Agent仍属后续规划，未宣称真实模型效果达标。
+- 接入FISCO联盟链、独立TLS signer和管理操作多签，提供Docker与Kubernetes（K3S发行版）部署清单，验证节点、中间件重建后的数据保留与真实结算闭环。
+
+HR短开场白候选：您好，我希望应聘Java后端研发岗位。我的时间银行项目重点验证异步结算可靠性，包含Spring Boot、Redis、RabbitMQ、按月分表，以及独立签名和管理多签；已保留故障恢复测试与K3S部署证据，也实现了带引用校验的RAG流程，希望进一步交流。
+
+面试自述可按“链上成功但数据库未知的实际问题→幂等与原交易恢复设计→消息重复/响应丢失测试→部署重启暴露的节点与权限缺陷→修复与边界”展开。仍需补强的证据是：本人独立复现和讲解、真实模型效果集、多机故障测试、带业务数据分布的结算负载；不填造生产用户量、吞吐提升比例或上线收益。
 
 ## F项容器与Kubernetes部署（2026-11-18）
 

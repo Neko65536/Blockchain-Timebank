@@ -17,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.LongAdder;
 
 /** 公告允许短暂旧读；支付、名额和权限始终以数据库为准。版本随公告事务提交，旧读不能覆盖新版本缓存。 */
 @Service
@@ -27,20 +28,31 @@ public class NoticeCacheService {
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     @Value("${app.redis-enabled:false}") private boolean enabled;
+    private final LongAdder requests = new LongAdder(), hits = new LongAdder(), misses = new LongAdder(),
+            rebuilds = new LongAdder(), lockBusy = new LongAdder(), fallbacks = new LongAdder();
+
+    /** 单进程累计值；用压测前后差值计算，重启归零，不混入Redis锁或其他业务的GET。 */
+    public Map<String, Long> metrics() {
+        return Map.of("requests", requests.sum(), "hits", hits.sum(), "misses", misses.sum(),
+                "rebuilds", rebuilds.sum(), "lockBusy", lockBusy.sum(), "fallbacks", fallbacks.sum());
+    }
     private static final DefaultRedisScript<Long> UNLOCK = new DefaultRedisScript<>(
             "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end", Long.class);
 
     public List<Notice> recent(int limit) {
         int n = Math.min(Math.max(limit, 1), 100);
         if (!enabled) return notices.listRecent(n);
+        requests.increment();
         long version = jdbc.queryForObject("select version_value from cache_revision where cache_name='notices'", Long.class);
         String key = "timebank:notices:v" + version;
         String token = UUID.randomUUID().toString();
         String lock = key + ":lock";
         try {
             String saved = redis.opsForValue().get(key);
-            if (saved != null) return slice(decode(saved), n);
+            if (saved != null) { List<Notice> result = slice(decode(saved), n); hits.increment(); return result; }
+            misses.increment();
             if (!Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(lock, token, Duration.ofSeconds(3)))) {
+                lockBusy.increment();
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "公告正在刷新，请稍后重试");
             }
             try {
@@ -48,9 +60,11 @@ public class NoticeCacheService {
                 if (saved != null) return slice(decode(saved), n);
                 List<Notice> rows = notices.listRecent(100);
                 redis.opsForValue().set(key, encode(rows), Duration.ofSeconds(rows.isEmpty() ? 5 : 30 + ThreadLocalRandom.current().nextInt(10)));
+                rebuilds.increment();
                 return slice(rows, n);
             } finally { redis.execute(UNLOCK, Collections.singletonList(lock), token); }
         } catch (DataAccessException redisUnavailable) {
+            fallbacks.increment();
             // 公告读取选择可用性；写入限流则明确失败关闭，不共用降级策略。
             return notices.listRecent(n);
         }

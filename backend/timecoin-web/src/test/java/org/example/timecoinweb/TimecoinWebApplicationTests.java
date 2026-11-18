@@ -166,6 +166,10 @@ class TimecoinWebApplicationTests {
         mvc.perform(get("/dashboard/stats").header("token", token(2, 1))).andExpect(status().isForbidden());
         mvc.perform(get("/dashboard/stats").header("token", token(1, 3))).andExpect(status().isOk()).andExpect(jsonPath("$.code").value(1));
         mvc.perform(get("/dashboard/notices")).andExpect(status().isOk());
+        mvc.perform(get("/administrator/notices/cache-metrics")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/administrator/notices/cache-metrics").header("token", token(2, 1))).andExpect(status().isForbidden());
+        mvc.perform(get("/administrator/notices/cache-metrics").header("token", token(1, 3)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.requests").isNumber());
     }
 
     @Test

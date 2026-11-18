@@ -19,6 +19,11 @@ public class NoticeAdminController {
 
     @Autowired
     private NoticeService noticeService;
+    @Autowired
+    private org.example.timecoinweb.service.NoticeCacheService cache;
+
+    @GetMapping("/cache-metrics")
+    public Result cacheMetrics() { return Result.success(cache.metrics()); }
 
     @GetMapping
     public Result list() {
