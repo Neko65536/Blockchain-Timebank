@@ -1,6 +1,6 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.example.timecoinweb.service.AiChatService;
 import org.junit.jupiter.api.Test;

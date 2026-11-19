@@ -1,6 +1,6 @@
 package org.example.timecoinweb;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.mapper.NoticeMapper;
 import org.example.timecoinweb.service.NoticeCacheService;
 import org.junit.jupiter.api.Test;

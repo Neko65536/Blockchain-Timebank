@@ -1,6 +1,6 @@
 package org.example.timecoinweb.signer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.*;
 import javax.net.ssl.*;
 import java.net.*;

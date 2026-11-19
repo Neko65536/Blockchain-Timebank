@@ -4,9 +4,9 @@ import org.geotools.geometry.jts.JTSFactoryFinder;
 import org.geotools.referencing.GeodeticCalculator;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
-import org.springframework.stereotype.Component;
 
-@Component
+
+
 public class DistanceUtils {
     private final GeometryFactory geometryFactory = JTSFactoryFinder.getGeometryFactory();
 

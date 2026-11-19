@@ -1,6 +1,6 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.*;
+import tools.jackson.databind.*;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Activity;
 import org.example.timecoinweb.mapper.ActivityMapper;
@@ -22,7 +22,7 @@ public class ReviewAgent {
     private final ActivityMapper activities;
     private final SettlementService settlements;
     private final ActivityDraftValidator validator;
-    private final AiChatService model;
+    private final AgentRuntime runtime;
     private final ObjectMapper json;
     private final PublishAgent audit;
     private final PlatformTransactionManager manager;
@@ -39,25 +39,31 @@ public class ReviewAgent {
         var prior=existing(actor,key,hash);if(prior!=null)return prior;
         Map<Integer,Activity> snapshots=new LinkedHashMap<>();
         for(int id:ids){Activity a=activities.selectByActId(id);pending(a);snapshots.put(id,a);}
-        // 单次模型调用分析整批，只发送必要业务文本，不发送联系方式、用户身份或token。
+        // 每次请求独立工具集，模型只能检查本批已授权活动；不发送联系方式、用户身份或token。
         List<Map<String,Object>> input=new ArrayList<>();
         for(Activity a:snapshots.values()){
             Map<String,Object> fields=new LinkedHashMap<>();fields.put("activityId",a.getId());fields.put("title",a.getTitle());fields.put("description",a.getDescription());fields.put("address",a.getAddress());fields.put("date",a.getDate());input.add(fields);
         }
-        JsonNode plan=model.planAgentTool("{reviews:[{activityId:整数,risk:LOW或HIGH,tags:[风险短标签],reason:依据说明}]}。每个输入活动恰好一项。检查模糊地址、敏感内容和信息缺失，不能代替人工审批。",json.writeValueAsString(input));
-        JsonNode results=plan.get("reviews");
-        if(plan.size()!=1 || results==null || !results.isArray() || results.size()!=ids.size())throw new IllegalStateException("预筛结果结构或数量错误");
-        Map<Integer,JsonNode> byId=new HashMap<>();
-        for(JsonNode item:results){
-            if(!item.isObject() || item.size()!=4 || !item.path("activityId").isIntegralNumber() || !item.path("activityId").canConvertToInt() || !Set.of("LOW","HIGH").contains(item.path("risk").asText()) || !item.path("tags").isArray() || item.path("tags").size()>10 || !item.path("reason").isTextual() || item.path("reason").asText().isBlank() || item.path("reason").asText().length()>1000)throw new IllegalStateException("预筛结果字段不合法");
-            int id=item.path("activityId").intValue();if(!snapshots.containsKey(id) || byId.put(id,item)!=null)throw new IllegalStateException("预筛结果活动编号不匹配");
-            for(JsonNode tag:item.path("tags"))if(!tag.isTextual() || tag.asText().length()>100)throw new IllegalStateException("风险标签不合法");
-        }
+        String runId=UUID.randomUUID().toString(); Set<Integer> inspected=new HashSet<>();
+        var itemSchema=AgentToolSpec.object(Map.of("activityId",Map.of("type","integer"),"risk",Map.of("type","string","enum",List.of("LOW","HIGH")),
+                "tags",Map.of("type","array","items",Map.of("type","string","maxLength",100),"maxItems",10),
+                "reason",Map.of("type","string","minLength",1,"maxLength",1000)),"activityId","risk","tags","reason");
+        JsonNode plan=runtime.run(actor,runId,"逐项调用inspect_activity观察固定规则，再结合文本提出风险依据；最后complete提交整批建议。每项必须人工审核，不能改变活动状态。",
+                json.writeValueAsString(input),List.of(
+                new AgentToolSpec("inspect_activity","检查本批活动的字段、敏感内容及地址规则",AgentToolSpec.object(Map.of("activityId",Map.of("type","integer","enum",ids)),"activityId"),false,args->{
+                    requireAdmin(actor);int id=args.path("activityId").intValue();
+                    if(!snapshots.containsKey(id))throw new IllegalArgumentException("不能访问批次外活动");
+                    var tags=ruleTags(snapshots.get(id));inspected.add(id);return Map.of("activityId",id,"ruleTags",tags,"requiresHuman",true);
+                }),
+                new AgentToolSpec("complete","提交整批风险建议，不执行审批",AgentToolSpec.object(Map.of("reviews",Map.of("type","array","items",itemSchema,"minItems",ids.size(),"maxItems",ids.size())),"reviews"),true,args->{
+                    requireAdmin(actor);if(!inspected.containsAll(ids))throw new IllegalArgumentException("必须先检查每个活动");predictions(args,ids);return args;
+                })));
+        Map<Integer,JsonNode> byId=predictions(plan,ids);
         return new TransactionTemplate(manager).execute(tx->{
             jdbc.queryForObject("select id from `user` where id=? for update",Integer.class,actor);
             requireAdmin(actor);
             var duplicate=existing(actor,key,hash);if(duplicate!=null)return duplicate;
-            String batch=UUID.randomUUID().toString();
+            String batch=runId;
             jdbc.update("insert into agent_review_batch(id,actor_id,request_key,input_hash) values(?,?,?,?)",batch,actor,key,hash);
             for(int id:ids){
                 Activity a=activities.lockById(id);pending(a);
@@ -102,11 +108,22 @@ public class ReviewAgent {
     private List<String> ruleTags(Activity a){
         List<String> tags=new ArrayList<>();
         if(a.getAddress()==null || a.getAddress().trim().length()<6 || a.getAddress().matches(".*(附近|待定|到时联系|另行通知).*"))tags.add("地址不明确");
-        var fieldIssues=validator.issues(a,java.time.LocalDateTime.now());
+        var fieldIssues=validator.issues(json.convertValue(a,Activity.class),java.time.LocalDateTime.now());
         if(!fieldIssues.isEmpty()){tags.add("信息缺失或字段校验未通过");tags.addAll(fieldIssues);}
         String text=String.valueOf(a.getTitle())+" "+String.valueOf(a.getDescription());
         for(String word:sensitiveTerms.split(","))if(!word.isBlank() && text.contains(word.trim())){tags.add("命中敏感内容规则");break;}
         return tags;
+    }
+    private Map<Integer,JsonNode> predictions(JsonNode plan,List<Integer> ids){
+        JsonNode results=plan.get("reviews");
+        if(plan.size()!=1 || results==null || !results.isArray() || results.size()!=ids.size())throw new IllegalArgumentException("预筛结果结构或数量错误");
+        Map<Integer,JsonNode> byId=new HashMap<>();
+        for(JsonNode item:results){
+            if(!item.isObject() || item.size()!=4 || !item.path("activityId").isIntegralNumber() || !item.path("activityId").canConvertToInt() || !Set.of("LOW","HIGH").contains(item.path("risk").asText()) || !item.path("tags").isArray() || item.path("tags").size()>10 || !item.path("reason").isTextual() || item.path("reason").asText().isBlank() || item.path("reason").asText().length()>1000)throw new IllegalArgumentException("预筛结果字段不合法");
+            int id=item.path("activityId").intValue();if(!ids.contains(id) || byId.put(id,item)!=null)throw new IllegalArgumentException("预筛结果活动编号不匹配");
+            for(JsonNode tag:item.path("tags"))if(!tag.isTextual() || tag.asText().length()>100)throw new IllegalArgumentException("风险标签不合法");
+        }
+        return byId;
     }
     private void pending(Activity a){if(a==null || a.getStatus()==null || a.getStatus()!=1)throw new ResponseStatusException(HttpStatus.CONFLICT,"仅待审核活动可预筛或审批");}
     private List<Map<String,Object>> existing(int actor,String key,String hash){

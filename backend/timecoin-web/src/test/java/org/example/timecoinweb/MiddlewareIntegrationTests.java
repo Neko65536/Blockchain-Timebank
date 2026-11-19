@@ -13,7 +13,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -40,7 +40,7 @@ import static org.mockito.ArgumentMatchers.*;
         "security.jwt-secret=test-only-p1-middleware-secret-32-bytes", "ai.chat.enabled=false",
         "settlement.mq-enabled=true", "settlement.dispatch-initial-ms=3600000", "settlement.dispatch-ms=3600000",
         "spring.rabbitmq.port=${test.rabbit-port:5673}", "spring.rabbitmq.listener.simple.auto-startup=false",
-        "spring.redis.port=${test.redis-port:6380}", "app.redis-enabled=true", "spring.redis.password=",
+        "spring.data.redis.port=${test.redis-port:6380}", "app.redis-enabled=true", "spring.data.redis.password=",
         "settlement.retry-ms=0", "app.upload.image-dir=./target/test-images"
 })
 class MiddlewareIntegrationTests {
@@ -51,7 +51,7 @@ class MiddlewareIntegrationTests {
     @Autowired SettlementDispatcher dispatcher;
     @Autowired SettlementService settlements;
     @Autowired NoticeService notices;
-    @MockBean TimeCoinChainService chain;
+    @MockitoBean TimeCoinChainService chain;
     @Autowired org.example.timecoinweb.rag.KnowledgeService knowledge;
     @Autowired org.example.timecoinweb.rag.RagMessaging ragMessaging;
     @Autowired org.example.timecoinweb.rag.RagAnswerService answers;
@@ -65,7 +65,7 @@ class MiddlewareIntegrationTests {
         redis.opsForValue().set(key+":lock","other-worker",java.time.Duration.ofSeconds(150));
         try {
             org.springframework.web.server.ResponseStatusException error=assertThrows(org.springframework.web.server.ResponseStatusException.class,()->answers.answer(1,question));
-            assertEquals(503,error.getRawStatusCode());assertEquals("other-worker",redis.opsForValue().get(key+":lock"));
+            assertEquals(503,error.getStatusCode().value());assertEquals("other-worker",redis.opsForValue().get(key+":lock"));
         } finally { redis.delete(key+":lock"); }
         assertEquals("NO_EVIDENCE",answers.answer(1,question).get("mode"));
         Long ttl=redis.getExpire(key);assertNotNull(ttl);assertTrue(ttl>0 && ttl<=10);assertFalse(Boolean.TRUE.equals(redis.hasKey(key+":lock")));
@@ -75,7 +75,7 @@ class MiddlewareIntegrationTests {
     @Test
     void ragOutboxIndexesWithRealBrokerAndCacheInvalidatesOnDisable() throws Exception {
         String id=knowledge.submit(UUID.randomUUID().toString(),"志愿者报名指引","志愿者进入活动列表阅读说明，选择有剩余名额的活动后点击报名。",2,"FAQ");
-        ragMessaging.dispatch();listeners.start();
+        ragMessaging.dispatch();assertFalse(listeners.getListenerContainers().isEmpty()); listeners.getListenerContainers().forEach(org.springframework.amqp.rabbit.listener.MessageListenerContainer::start);
         await(()->"READY".equals(jdbc.queryForObject("select state from rag_document where id=?",String.class,id)));
         assertTrue(jdbc.queryForObject("select send_count from rag_outbox where document_id=?",Integer.class,id)>0);
         Map<String,Object> first=answers.answer(2,"志愿者报名指引");
@@ -110,7 +110,7 @@ class MiddlewareIntegrationTests {
         assertEquals(0, jdbc.queryForObject("select send_count from settlement_outbox", Integer.class));
         dispatcher.dispatch(); dispatcher.publish(id);
         assertEquals(1, jdbc.queryForObject("select send_count from settlement_outbox", Integer.class));
-        listeners.start();
+        assertFalse(listeners.getListenerContainers().isEmpty()); listeners.getListenerContainers().forEach(org.springframework.amqp.rabbit.listener.MessageListenerContainer::start);
         await(() -> "SUCCEEDED".equals(settlements.get(id, 991, false).get("state")));
         assertEquals(10L, jdbc.queryForObject("select coin_balance from `user` where id=991", Long.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from chain_tx_log", Integer.class));
@@ -140,7 +140,7 @@ class MiddlewareIntegrationTests {
     @Test
     void malformedMessageReachesRealDeadLetterQueue() throws Exception {
         rabbit.send(SettlementMessaging.EXCHANGE, SettlementMessaging.ROUTING_KEY, new Message("invalid".getBytes(java.nio.charset.StandardCharsets.UTF_8), new MessageProperties()));
-        listeners.start();
+        assertFalse(listeners.getListenerContainers().isEmpty()); listeners.getListenerContainers().forEach(org.springframework.amqp.rabbit.listener.MessageListenerContainer::start);
         final Message[] dead = new Message[1];
         await(() -> { dead[0] = rabbit.receive(SettlementMessaging.QUEUE + ".dead"); return dead[0] != null; });
         assertEquals("invalid", new String(dead[0].getBody(), java.nio.charset.StandardCharsets.UTF_8));
@@ -285,7 +285,7 @@ class MiddlewareIntegrationTests {
         // 外部测试协调者看到此标记后重启独立broker；测试不控制宿主机Docker。
         System.out.println("P1_BROKER_RESTART_READY");
         assertTrue(connectionClosed.await(45, TimeUnit.SECONDS), "需要在45秒内重启测试broker");
-        listeners.start();
+        assertFalse(listeners.getListenerContainers().isEmpty()); listeners.getListenerContainers().forEach(org.springframework.amqp.rabbit.listener.MessageListenerContainer::start);
         await(() -> "SUCCEEDED".equals(settlements.get(id, 991, false).get("state")));
         assertEquals(1, jdbc.queryForObject("select send_count from settlement_outbox", Integer.class));
         assertEquals(1L, jdbc.queryForObject("select coin_balance from `user` where id=991", Long.class));

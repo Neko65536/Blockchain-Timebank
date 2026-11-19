@@ -16,10 +16,10 @@
     </parent>
 
     <properties>
-        <java.version>11</java.version>
+        <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <spring-boot.version>2.6.13</spring-boot.version>
+
     </properties>
 
 
@@ -31,8 +31,8 @@
         </dependency>
         <dependency>
             <groupId>org.apache.shardingsphere</groupId>
-            <artifactId>shardingsphere-jdbc-core</artifactId>
-            <version>5.3.2</version>
+            <artifactId>shardingsphere-jdbc</artifactId>
+            <version>5.5.2</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -44,7 +44,7 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
         <dependency>
@@ -55,7 +55,7 @@
         <dependency>
             <groupId>org.mybatis.spring.boot</groupId>
             <artifactId>mybatis-spring-boot-starter</artifactId>
-            <version>2.3.0</version>
+            <version>4.0.0</version>
         </dependency>
 
         <dependency>
@@ -79,10 +79,20 @@
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-core</artifactId>
+            <version>2.0.5</version>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
+            <version>2.0.5</version>
+        </dependency>
         <!--实体类-->
         <dependency>
             <groupId>org.example</groupId>
@@ -98,22 +108,22 @@
         </dependency>
 
         <!-- Ethereum JSON-RPC（Hardhat 本地节点等） -->
-        <!-- 4.10+ 为 Java 17（class 61）；本项目为 Java 11，须使用 4.9.x -->
+        <!-- 保留已验证的合约客户端API；运行时由JDK21提供。 -->
         <dependency>
             <groupId>org.web3j</groupId>
             <artifactId>core</artifactId>
             <version>4.9.8</version>
         </dependency>
-        <!-- 与 web3j 4.9.8 一致；防止 aliyun-sdk-oss 等把 OkHttp 升到 4.12+ 导致 RequestBody.create(String,MediaType) NoSuchMethodError -->
+        <!-- 与AgentScope统一到OkHttp5；不能同时打包含同名类的okhttp4和okhttp-jvm5。 -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
-            <version>4.9.0</version>
+            <version>5.3.2</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>logging-interceptor</artifactId>
-            <version>4.9.0</version>
+            <version>5.3.2</version>
         </dependency>
 
         <!-- 本机 CPU / 内存 / 磁盘等（系统管理页真实数据） -->
@@ -125,39 +135,7 @@
     </dependencies>
 
 
-    <dependencyManagement>
-        <dependencies>
-            <!-- ShardingSphere5.3.2调用LoaderOptions.setCodePointLimit，Boot2.6默认1.29不包含该API。 -->
-            <dependency>
-                <groupId>org.yaml</groupId>
-                <artifactId>snakeyaml</artifactId>
-                <version>1.33</version>
-            </dependency>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- 覆盖 Spring Boot BOM 中的旧版 Lombok，避免与新 JDK / IDEA 编译器不兼容 -->
-            <dependency>
-                <groupId>org.projectlombok</groupId>
-                <artifactId>lombok</artifactId>
-                <version>${lombok.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.squareup.okhttp3</groupId>
-                <artifactId>okhttp</artifactId>
-                <version>4.9.0</version>
-            </dependency>
-            <dependency>
-                <groupId>com.squareup.okhttp3</groupId>
-                <artifactId>logging-interceptor</artifactId>
-                <version>4.9.0</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+
 
     <build>
         <plugins>

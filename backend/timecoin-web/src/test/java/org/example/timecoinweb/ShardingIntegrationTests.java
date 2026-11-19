@@ -6,7 +6,7 @@ import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,8 +47,8 @@ class ShardingIntegrationTests {
     @Autowired SettlementDispatcher dispatcher;
     @Autowired org.springframework.amqp.rabbit.core.RabbitTemplate rabbit;
     @Autowired org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry listeners;
-    @MockBean TimeCoinChainService chain;
-    @MockBean(answer=org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
+    @MockitoBean TimeCoinChainService chain;
+    @MockitoBean(answers=org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
     JdbcTemplate physical;
     @TestConfiguration static class Signing { @Bean Credentials credentials() {return Credentials.create("1");} }
     @BeforeEach void setup() {
@@ -87,7 +87,7 @@ class ShardingIntegrationTests {
                 jdbc.update("insert into chain_submission(request_key,scope_key,nonce_value,payload_hash,tx_hash,raw_tx,state,created_at) values(?,?,?,?,?,?,'CONFIRMED',?)",hash,"test",0,hash,hash,"test",created);
             });return hash;
         });
-        dispatcher.dispatch();listeners.start();
+        dispatcher.dispatch();assertFalse(listeners.getListenerContainers().isEmpty()); listeners.getListenerContainers().forEach(org.springframework.amqp.rabbit.listener.MessageListenerContainer::start);
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
         while(!"SUCCEEDED".equals(settlements.get(id,991,false).get("state")) && System.nanoTime()<deadline) Thread.sleep(100);
         settlements.process(id);

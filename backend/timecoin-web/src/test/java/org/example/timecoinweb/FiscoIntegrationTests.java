@@ -1,6 +1,6 @@
 package org.example.timecoinweb;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.config.*;
 import org.example.timecoinweb.service.FiscoTransactionService;
 import org.example.timecoinweb.signer.RemoteSigner;

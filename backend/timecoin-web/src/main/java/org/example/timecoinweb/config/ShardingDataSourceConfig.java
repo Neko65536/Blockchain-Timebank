@@ -2,7 +2,7 @@ package org.example.timecoinweb.config;
 
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.shardingsphere.driver.api.ShardingSphereDataSourceFactory;
-import org.apache.shardingsphere.infra.config.algorithm.AlgorithmConfiguration;
+import org.apache.shardingsphere.infra.algorithm.core.config.AlgorithmConfiguration;
 import org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration;
 import org.apache.shardingsphere.sharding.api.config.rule.ShardingTableRuleConfiguration;
 import org.apache.shardingsphere.sharding.api.config.strategy.sharding.StandardShardingStrategyConfiguration;
@@ -61,7 +61,7 @@ public class ShardingDataSourceConfig {
             }
             rule.getBindingTableGroups().add(new org.apache.shardingsphere.sharding.api.config.rule.ShardingTableReferenceRuleConfiguration("settlements","settlement_order,settlement_outbox"));
             // 当前只有一个物理数据源；不宣称多库广播一致性或XA。
-            rule.getBroadcastTables().addAll(List.of("user","activity"));
+            var single=new org.apache.shardingsphere.single.config.SingleRuleConfiguration(List.of("ds.*"),"ds");
             Properties interval=new Properties();
             interval.setProperty("datetime-pattern","yyyy-MM-dd HH:mm:ss");
             interval.setProperty("datetime-lower",first.atDay(1)+" 00:00:00");
@@ -70,7 +70,7 @@ public class ShardingDataSourceConfig {
             interval.setProperty("datetime-interval-amount","1");interval.setProperty("datetime-interval-unit","MONTHS");
             rule.getShardingAlgorithms().put("monthly",new AlgorithmConfiguration("INTERVAL",interval));
             Properties props=new Properties();props.setProperty("sql-show","false");
-            return ShardingSphereDataSourceFactory.createDataSource(Map.of("ds",physical),List.of(rule),props);
+            return ShardingSphereDataSourceFactory.createDataSource(Map.of("ds",physical),List.of(rule,single),props);
         } catch(Exception failure) { physical.close();throw failure; }
     }
 }

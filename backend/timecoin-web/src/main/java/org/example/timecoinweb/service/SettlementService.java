@@ -1,6 +1,6 @@
 package org.example.timecoinweb.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.Data;
 import org.example.pojo.Activity;
 import org.example.pojo.VolActivity;

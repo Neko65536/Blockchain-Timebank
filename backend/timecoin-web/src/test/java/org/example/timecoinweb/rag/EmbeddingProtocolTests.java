@@ -1,5 +1,5 @@
 package org.example.timecoinweb.rag;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.*;
 import org.springframework.test.util.ReflectionTestUtils;

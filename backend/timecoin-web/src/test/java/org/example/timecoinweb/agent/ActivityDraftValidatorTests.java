@@ -1,6 +1,6 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.pojo.Activity;
 import org.example.timecoinweb.config.BlockchainProperties;
 import org.junit.jupiter.api.Test;
@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ActivityDraftValidatorTests {
-    final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+    final ObjectMapper json = tools.jackson.databind.json.JsonMapper.builder().configureForJackson2().build();
     final ActivityDraftValidator validator = new ActivityDraftValidator(json, new BlockchainProperties());
     @Test void rejectsModelAuthorityAndNumericCoercion() throws Exception {
         for (String payload : new String[]{"{\"oldId\":3}","{\"status\":2}","{\"quota\":1.5}","{\"quota\":65537}","{\"volunteerReward\":\"2\"}"})

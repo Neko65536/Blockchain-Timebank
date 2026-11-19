@@ -1,6 +1,30 @@
 # 基于区块链的时间币服务系统
 
-## Agent实施进展（2026-11-19）
+## JDK21、SpringBoot4与ReAct升级（2026-11-19）
+
+当前开发分支`codex/boot4-agentscope`，当前使用JDK21、SpringBoot4.0.9、MyBatis启动器4.0.0、ShardingSphere-JDBC5.5.2和AgentScope Java2.0.5。以下升级记录覆盖后文旧版本说明，历史测试数据保留原环境，不能当作升级后的性能结果。
+
+基础迁移已完成：统一父POM的Boot依赖管理和Java21编译参数；Servlet/生命周期注解迁移到Jakarta；应用使用Jackson3，固定日期、属性顺序及空值序列化契约，SDK内部仍可使用自己的Jackson2依赖；PageHelper6.1.1显式注册MyBatis插件；Redis配置前缀改为`spring.data.redis`。分片配置显式加载单表，SQL中的保留字使用引用标识符。OkHttp统一到5.3.2，避免AgentScope的`okhttp-jvm`与旧OkHttp4重复提供同名类。后端镜像使用Temurin21，独立signer入口改为`org.springframework.boot.loader.launch.PropertiesLauncher`。
+
+三个Agent改为真正的AgentScope`ReActAgent`工具循环，模型使用原生`tool_calls`，每轮观察工具结果后决定下一步。每次请求独立上下文，服务端注入身份并在每个业务工具中复验角色；模型参数不能设置身份。只注册下列白名单工具：
+
+| Agent | 工具与最终行为 |
+| --- | --- |
+| 发布 | `validate_draft`返回字段问题，模型可根据已知事实修订后再校验；`complete`返回已校验草稿。缺失事实交给用户补充，发布与扣费仍须独立的用户确认接口。 |
+| 审核 | `inspect_activity`只检查当前批次选中的活动；必须逐项检查后才能`complete`提交整批建议。固定规则风险不能被模型降级，所有结果等待人工审批。 |
+| 运营 | `activity_registration_top`和`coin_daily_flow`执行固定参数化聚合SQL，模型观察统计口径与结果后`complete`返回。数值、图表和结论取自服务端查询，模型不能提交SQL或编造指标。 |
+
+复用`ai.chat.*`配置，模型必须支持OpenAI兼容的原生工具调用。默认预算为每请求最多6次模型调用、12次工具执行、90秒总时限，单次模型调用35秒且不自动重试；仍保留4个工作线程和16个排队名额。未配置模型、未完成工具流程、权限撤销、超时和预算耗尽均显式失败。`agent_audit`记录调用名称、状态、参数/结果摘要及调用数，不保存模型思维过程、原始提示或密钥。
+
+最终验证：JDK21下`package`成功，121项测试中118项通过、3项条件性跳过，日志`backend/timecoin-web/target/boot4-final.log`。跳过项为RabbitMQ重启故障演练、专用MySQL EXPLAIN和指定历史合约重启检查，本轮没有把这些旧验收重复计入。
+
+已验证真实MySQL8按月分片/事务回滚/跨月幂等及Agent聚合、Redis缓存/限流、RabbitMQ发布确认/重复投递/死信。真实回环FISCO3.8测试链及独立JDK21 signer完成部署、签名、发币/转账和响应丢失后的凭据恢复。ReAct测试只替换远端模型，实际运行AgentScope循环与业务工具，覆盖三个Agent、五项批量预筛、角色撤销、身份伪造、未注册支付工具、循环预算、超时取消、请求中断与并发用户隔离。HTTP协议测试用本地OpenAI兼容服务验证“错误参数→工具反馈→修正→完成”的三轮调用；另验证Web3j真实HTTP客户端与唯一OkHttp类来源、PageHelper分页、Jackson3 HTTP表单及与Jackson2逐字节一致的快照/摘要。
+
+Docker镜像`timebank-backend:boot4-react`已构建，使用Temurin21.0.13、UID10001和只读根文件系统启动，`/dashboard/notices`返回HTTP200及`code=1`。构建与启动日志为`boot4-docker-build.log`、`boot4-docker-smoke.log`，均在`backend/timecoin-web/target/`。打包后的signer新入口已检查可加载到环境变量校验；真实签名服务验证使用独立测试子进程。K8s清单已更新启动类，但本轮未滚动升级现有K3S集群。
+
+复现须让Maven使用JDK21，普通回归执行`mvn -f backend/pom.xml test`。本机独立中间件就绪后，设置`AGENT_MYSQL_PASSWORD`，执行`mvn -f backend/pom.xml -Dp1.integration=true -Dsharding.integration=true -Dagent.mysql.integration=true -Dfisco.integration=true -Dtest.fisco-config=target/fisco-local/sdk.toml package`；真实链证书和测试输出仍只放在忽略目录。未进行真实付费模型质量评测；须显式设置支持工具调用的`AI_CHAT_MODEL`与对应接口，不能把现有默认模型名称当作能力保证。AgentScope2.0.5在取消测试中会记录内部`CancellationException/onErrorDropped`，测试已验证订阅取消且不产生完成结果，未通过全局忽略异常来隐藏该日志。旧压测数据不适用于本次版本。
+
+## Agent初版实施记录（2026-11-19，ReAct升级见上节）
 
 原规划中暂缓的三个Agent现已按活动发布编排→审核预筛→运营问答顺序实现，开发分支`codex/agents`。下文较早章节中的“Agent暂不实施”是此前交付范围；当前能力及验收边界以本节为准。
 
@@ -165,7 +189,7 @@ HR短开场白候选：您好，我希望应聘Java后端研发岗位。我的�
 
 ## F项容器与Kubernetes部署（2026-11-18）
 
-`backend/Dockerfile`提供Java11非root镜像；`k8s/base`包含后端、MySQL、Redis、RabbitMQ及各自PVC/Service，凭据通过Secret注入。`k8s/fisco`叠加4个独立节点和TLS签名服务。业务进程不挂载operator私钥，signer仅允许backend访问8443且禁止出站；节点证书、SDK证书、签名私钥、服务端TLS与客户端信任库分别挂载。Secret本身不是HSM，应配合集群静态加密、RBAC和宿主机权限管理。
+`backend/Dockerfile`现提供Java21非root镜像（本节历史验收使用Java11）；`k8s/base`包含后端、MySQL、Redis、RabbitMQ及各自PVC/Service，凭据通过Secret注入。`k8s/fisco`叠加4个独立节点和TLS签名服务。业务进程不挂载operator私钥，signer仅允许backend访问8443且禁止出站；节点证书、SDK证书、签名私钥、服务端TLS与客户端信任库分别挂载。Secret本身不是HSM，应配合集群静态加密、RBAC和宿主机权限管理。
 
 部署顺序（在仓库根目录使用Linux命令，镜像需导入K3S的containerd或推送到可访问的镜像仓库）：
 
@@ -218,11 +242,11 @@ SDK配置模板在`deploy/fisco/sdk.toml.example`。节点证书、signer私钥�
 # 在TimeCoinSystem执行npm ci及npx hardhat test后构建后端
 mvn -f backend/pom.xml package
 # 环境变量就绪后，独立启动signer；不要使用java -jar启动业务主类
-java -Dloader.main=org.example.timecoinweb.signer.SignerMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher
+java -Dloader.main=org.example.timecoinweb.signer.SignerMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher
 # 单独运维进程部署新合约，输出地址并保存部署前的原始凭据
-java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher deploy
+java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher deploy
 # observer子命令另需FISCO_OBSERVER_NODEID_FILE；权限模式下通过委员提案执行
-java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.PropertiesLauncher observer
+java -Dloader.main=org.example.timecoinweb.signer.FiscoAdminMain -cp backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher observer
 java -jar backend/timecoin-web/target/timecoin-web-0.0.1-SNAPSHOT.jar --spring.profiles.active=fisco
 ```
 
@@ -417,7 +441,7 @@ mvn -f backend/pom.xml test '-Dp1.integration=true' '-Dtest=MiddlewareIntegratio
 
 | 组件 | 说明 |
 |------|------|
-| **JDK** | 11（与 `backend` 中 Maven 配置一致） |
+| **JDK** | 21（编译、测试、后端与signer镜像统一） |
 | **Node.js** | 16+ / 18+（用于前端与 Hardhat） |
 | **MySQL** | 默认配置使用MySQL；本地无MySQL时显式启用`dev`，使用H2文件库 |
 

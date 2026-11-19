@@ -39,7 +39,7 @@ class GovernanceTests {
         ShardRouting routing=new ShardRouting(jdbc);DataSourceTransactionManager manager=new DataSourceTransactionManager(source);
         governance=new GovernanceService(jdbc,manager,props,routing,beans.getBeanProvider(TimeCoinChainService.class),beans.getBeanProvider(ChainTransactionService.class));
         beans.registerSingleton("governance",governance);
-        settlements=new SettlementService(jdbc,manager,chain,mock(CoinBalanceLedgerService.class),mock(ActivityMapper.class),mock(VolMapper.class),props,new com.fasterxml.jackson.databind.ObjectMapper(),routing);
+        settlements=new SettlementService(jdbc,manager,chain,mock(CoinBalanceLedgerService.class),mock(ActivityMapper.class),mock(VolMapper.class),props,new tools.jackson.databind.ObjectMapper(),routing);
         ReflectionTestUtils.setField(settlements,"governance",beans.getBeanProvider(GovernanceService.class));
     }
     String signature(Credentials key) {

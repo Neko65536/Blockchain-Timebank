@@ -1,10 +1,9 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.*;
+import tools.jackson.databind.*;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Activity;
 import org.example.timecoinweb.config.BlockchainProperties;
-import org.example.timecoinweb.service.AiChatService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -15,13 +14,13 @@ import org.web3j.crypto.Hash;
 import java.time.LocalDateTime;
 import java.util.*;
 
-/** 固定工具图：生成→校验→收集补充→待用户确认。无支付或发布工具。 */
+/** ReAct生成、校验与修订候选表单；持久化和人工发布确认在模型循环之外。 */
 @Service
 @RequiredArgsConstructor
 public class PublishAgent {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
-    private final AiChatService model;
+    private final AgentRuntime runtime;
     private final ActivityDraftValidator validator;
     private final PlatformTransactionManager manager;
     private final BlockchainProperties chain;
@@ -33,7 +32,22 @@ public class PublishAgent {
         String hash=Hash.sha3String(text);
         var previous=jdbc.queryForList("select id,input_hash from agent_task where owner_id=? and request_key=?",actor,key);
         if(!previous.isEmpty()) {sameInput(previous.get(0),hash);return get(actor,(String)previous.get(0).get("id"));}
-        JsonNode fields=model.planAgentTool("活动表单对象，允许字段title,quota,description,volunteerReward,date(yyyy-MM-dd),begin/end(HH:mm:ss),deadline(yyyy-MM-dd'T'HH:mm:ss),address,phone,serviceType,extraJson(JSON字符串)。不要输出其他字段。",text);
+        String runId=UUID.randomUUID().toString();
+        var checked=new java.util.concurrent.atomic.AtomicReference<JsonNode>();
+        Map<String,Object> properties=new LinkedHashMap<>();
+        for(String field:List.of("title","description","date","begin","end","deadline","address","phone","serviceType","extraJson"))
+            properties.put(field,Map.of("type",List.of("string","null")));
+        for(String field:List.of("quota","volunteerReward")) properties.put(field,Map.of("type",List.of("integer","null")));
+        JsonNode fields=runtime.run(actor,runId,"生成活动表单，日期为yyyy-MM-dd，时间为HH:mm:ss，deadline为yyyy-MM-dd'T'HH:mm:ss。"
+                +"先validate_draft观察问题，有已知事实可修正时重新校验；缺失信息不得猜测，保留问题交给用户补充，最后complete。extraJson必须为JSON字符串。",text,List.of(
+                new AgentToolSpec("validate_draft","校验候选活动表单并返回需要用户补充的字段",AgentToolSpec.object(Map.of("draft",AgentToolSpec.object(properties)),"draft"),false,args->{
+                    requireElder(actor); JsonNode draft=args.path("draft");
+                    var decoded=validator.decode(draft); var feedback=validator.issues(decoded,LocalDateTime.now());
+                    checked.set(draft.deepCopy());return Map.of("draft",draft,"feedback",feedback,"state",feedback.isEmpty()?"READY":"NEEDS_INPUT");
+                }),
+                new AgentToolSpec("complete","结束草稿编排，返回最近一次通过类型校验的草稿；不会发布或扣费",AgentToolSpec.object(Map.of()),true,args->{
+                    requireElder(actor); if(checked.get()==null)throw new IllegalArgumentException("必须先调用validate_draft");return checked.get();
+                })));
         Activity activity=validator.decode(fields);
         List<String> issues=validator.issues(activity,LocalDateTime.now());
         return new TransactionTemplate(manager).execute(tx->{
@@ -42,7 +56,7 @@ public class PublishAgent {
             requireElder(actor);
             var duplicate=jdbc.queryForList("select id,input_hash from agent_task where owner_id=? and request_key=?",actor,key);
             if(!duplicate.isEmpty()){sameInput(duplicate.get(0),hash);return get(actor,(String)duplicate.get(0).get("id"));}
-            String id=UUID.randomUUID().toString();
+            String id=runId;
             jdbc.update("insert into agent_task(id,owner_id,request_key,input_hash,state,draft,feedback) values(?,?,?,?,?,?,?)",id,actor,key,hash,issues.isEmpty()?"READY":"NEEDS_INPUT",encode(fields),encode(issues));
             audit(id,actor,"GENERATE_DRAFT","模型生成候选表单，未执行发布");
             audit(id,actor,"VALIDATE_DRAFT",encode(issues));

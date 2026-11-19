@@ -20,7 +20,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     public org.springframework.http.ResponseEntity<Result> explicitStatus(org.springframework.web.server.ResponseStatusException ex) {
-        return org.springframework.http.ResponseEntity.status(ex.getStatus()).header("Retry-After", "1")
+        return org.springframework.http.ResponseEntity.status(ex.getStatusCode()).header("Retry-After", "1")
                 .body(Result.error(ex.getReason()));
     }
 

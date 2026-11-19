@@ -14,14 +14,14 @@ public interface RegisterMapper {
     /**
      * 新增加用户，注册
      */
-    @Insert("insert into user(username,name,password,role,email,age,phone,address,create_time,update_time)" +
+    @Insert("insert into `user`(username,name,password,role,email,age,phone,address,create_time,update_time)" +
             "values(#{username},#{name},#{password},#{role},#{email},#{age},#{phone},#{address},#{createTime},#{updateTime})")
     void register(User user) throws DuplicateKeyException;
 
-    @Select("select * from user where username=#{username}")
+    @Select("select * from `user` where username=#{username}")
     User getByUsername(@Param("username") String username);
 
-    @Update("update user set password=#{password}, update_time=now() where id=#{id}")
+    @Update("update `user` set password=#{password}, update_time=now() where id=#{id}")
     void updatePasswordById(@Param("id") Integer id, @Param("password") String password);
 
     /**
@@ -29,6 +29,6 @@ public interface RegisterMapper {
      * @param id
      * @return
      */
-    @Select("select * from user where id=#{id}")
+    @Select("select * from `user` where id=#{id}")
     User getById(Integer id);
 }

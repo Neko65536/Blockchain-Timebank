@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.web3j.crypto.Hash;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.Collections;
 
 @Component
@@ -27,14 +27,14 @@ public class RedisRateLimitInterceptor implements HandlerInterceptor {
         WINDOW.setLocation(new org.springframework.core.io.ClassPathResource("rate-limit-sliding.lua"));
         WINDOW.setResultType(Long.class);
     }
-    @javax.annotation.PostConstruct
+    @jakarta.annotation.PostConstruct
     public void validateLimits() {
         if (writeLimit <= 0 || authLimit <= 0) throw new IllegalArgumentException("限流额度必须大于0");
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        if (request.getDispatcherType() == javax.servlet.DispatcherType.ASYNC) return true;
+        if (request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) return true;
         if (!enabled || !java.util.Set.of("POST", "PUT", "PATCH", "DELETE").contains(request.getMethod())) return true;
         String path = request.getRequestURI().substring(request.getContextPath().length());
         boolean auth = "/login".equals(path) || "/register".equals(path);

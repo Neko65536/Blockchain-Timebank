@@ -1,7 +1,7 @@
 package org.example.timecoinweb.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.config.BlockchainProperties;
 import org.example.timecoinweb.config.ShardRouting;
 import org.example.timecoinweb.signer.RemoteSigner;

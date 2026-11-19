@@ -109,10 +109,10 @@ public interface VolMapper {
      * @param activityId
      * @return
      */
-    @Select("select user.id,user.name,user.phone," +
-            "user.email,user.age,av.status,av.sign,av.reward_paid as rewardPaid " +
-            "from user,activity_volunteer as av,volunteer as vol " +
-            "where av.activity_id=#{activityId} and av.volunteer_id =vol.id and vol.user_id=user.id")
+    @Select("select `user`.id,`user`.name,`user`.phone," +
+            "`user`.email,`user`.age,av.status,av.sign,av.reward_paid as rewardPaid " +
+            "from `user`,activity_volunteer as av,volunteer as vol " +
+            "where av.activity_id=#{activityId} and av.volunteer_id =vol.id and vol.user_id=`user`.id")
     List<Vol> selectUsers(@Param("activityId") Integer activityId);
 
     /**

@@ -9,7 +9,7 @@ import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.stereotype.Component;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.*;
-import javax.annotation.PreDestroy;
+import jakarta.annotation.PreDestroy;
 
 /** 区块通知只唤醒独立对账线程；合并重复通知，定时任务继续补偿断线期间的遗漏。 */
 @Component

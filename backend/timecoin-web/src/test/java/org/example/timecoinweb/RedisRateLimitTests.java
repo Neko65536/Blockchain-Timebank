@@ -19,7 +19,7 @@ class RedisRateLimitTests {
         RedisRateLimitInterceptor limiter=new RedisRateLimitInterceptor(redis);
         ReflectionTestUtils.setField(limiter,"enabled",true);
         MockHttpServletRequest request=new MockHttpServletRequest("POST","/users/old/ai/chat");
-        request.setAttribute("authenticatedUserId",2);request.setDispatcherType(javax.servlet.DispatcherType.ASYNC);
+        request.setAttribute("authenticatedUserId",2);request.setDispatcherType(jakarta.servlet.DispatcherType.ASYNC);
         assertTrue(limiter.preHandle(request,new MockHttpServletResponse(),new Object()));verifyNoInteractions(redis);
     }
     @Test

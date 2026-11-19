@@ -1,5 +1,5 @@
 package org.example.timecoinweb.controller;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Result;

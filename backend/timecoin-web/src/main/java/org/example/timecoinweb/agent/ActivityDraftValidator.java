@@ -1,7 +1,7 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Activity;
 import org.example.timecoinweb.config.BlockchainProperties;
@@ -23,7 +23,7 @@ public class ActivityDraftValidator {
     public Activity decode(JsonNode fields) {
         if (fields == null || !fields.isObject()) throw new IllegalArgumentException("活动草稿必须为对象");
         if (fields.toString().length() > 16000) throw new IllegalArgumentException("活动草稿过长");
-        fields.fieldNames().forEachRemaining(name -> {
+        fields.propertyNames().forEach(name -> {
             if (!FIELDS.contains(name)) throw new IllegalArgumentException("活动草稿包含未授权字段：" + name);
             if (!Set.of("quota", "volunteerReward").contains(name) && !fields.get(name).isNull() && !fields.get(name).isTextual())
                 throw new IllegalArgumentException(name + "必须为文本");

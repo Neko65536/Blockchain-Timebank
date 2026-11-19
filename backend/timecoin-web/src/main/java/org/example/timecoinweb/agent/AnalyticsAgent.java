@@ -1,8 +1,7 @@
 package org.example.timecoinweb.agent;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
-import org.example.timecoinweb.service.AiChatService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.http.HttpStatus;
@@ -18,10 +17,11 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class AnalyticsAgent {
-    private final AiChatService model;
+    private final AgentRuntime runtime;
     private final ReviewAgent authorization;
     private final JdbcTemplate jdbc;
     private final PublishAgent audit;
+    private final tools.jackson.databind.ObjectMapper json;
     // 现有业务写入LocalDateTime，无时区列；必须按同一JVM业务时区解释，不能伪装已转换。
     private static final ZoneId ZONE=ZoneId.systemDefault();
     private static final Set<String> TOOLS=Set.of("activity_registration_top","coin_daily_flow");
@@ -29,8 +29,27 @@ public class AnalyticsAgent {
     public Map<String,Object> answer(int actor,String question) throws Exception {
         authorization.requireAdmin(actor);
         if(question==null || question.isBlank() || question.length()>2000)throw new IllegalArgumentException("问题须为1至2000字");
+        String id=UUID.randomUUID().toString();
+        var observed=new java.util.concurrent.atomic.AtomicReference<Map<String,Object>>();
+        List<AgentToolSpec> tools=new ArrayList<>();
+        for(String name:TOOLS) tools.add(new AgentToolSpec(name,"读取"+(name.equals("coin_daily_flow")?"时间币每日流转金额":"保留报名关系排行")+"；start包含，end不包含，最多31天",
+                AgentToolSpec.object(Map.of("start",AgentToolSpec.text(),"end",AgentToolSpec.text()),"start","end"),false,args->{
+                    var plan=args.deepCopy();((tools.jackson.databind.node.ObjectNode)plan).put("tool",name);
+                    var result=query(actor,plan,id);observed.set(result);return result;
+                }));
+        tools.add(new AgentToolSpec("complete","返回最近一次查询的真实结果与统计口径，数值结论由服务端生成",AgentToolSpec.object(Map.of()),true,args->{
+            authorization.requireAdmin(actor);if(observed.get()==null)throw new IllegalArgumentException("必须先调用统计查询工具");return observed.get();
+        }));
+        JsonNode result=runtime.run(actor,id,"仅支持活动报名排行和时间币转账台账每日趋势，不支持任意SQL。今天为"+LocalDate.now(ZONE)+"，业务时区"+ZONE
+                +"。上周指本周一之前的完整周一至周日。观察查询结果与口径后，调用complete返回结果。",question,tools);
+        Map<String,Object> response=json.convertValue(result,new tools.jackson.core.type.TypeReference<Map<String,Object>>(){});
+        authorization.requireAdmin(actor);
+        audit.audit(id,actor,"ANALYTICS_READ",audit.encode(Map.of("questionHash",Hash.sha3String(question),"result",response)));
+        return response;
+    }
+
+    Map<String,Object> query(int actor,JsonNode plan,String id) {
         LocalDate today=LocalDate.now(ZONE);
-        JsonNode plan=model.planAgentTool("{tool:activity_registration_top或coin_daily_flow,start:yyyy-MM-dd,end:yyyy-MM-dd}。仅支持活动报名排行和时间币转账台账每日趋势，其他问题tool填unsupported，不允许SQL或其他字段。start包含，end不包含，最多31天。今天为"+today+"，业务时区"+ZONE+"。上周指本周一之前的完整周一至周日。",question);
         if(plan.size()!=3 || !plan.path("tool").isTextual() || !TOOLS.contains(plan.path("tool").asText()) || !plan.path("start").isTextual() || !plan.path("end").isTextual())
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,"仅支持活动报名排行和每日时间币流转，请明确日期范围");
         LocalDate start,end;
@@ -56,11 +75,10 @@ public class AnalyticsAgent {
             scope="按业务数据库台账create_time统计已入账TRANSFER金额，包含发布费和答谢，排除MINT；无记录日显示0。不是链上全部交易、净流量或账户余额。";
             conclusion="该范围已入账转账记录金额合计"+total.toPlainString()+"时间币。";
         }
-        Map<String,Object> response=new LinkedHashMap<>();String id=UUID.randomUUID().toString();
+        Map<String,Object> response=new LinkedHashMap<>();
         response.put("auditId",id);response.put("tool",tool);response.put("start",start.toString());response.put("end",end.toString());response.put("timezone",ZONE.toString());
         response.put("chartType","activity_registration_top".equals(tool)?"bar":"line");response.put("rows",rows);response.put("scope",scope);response.put("answer",conclusion);
         // 数值结论由工具结果构造，不让生成模型编造趋势或原因；记录问题摘要而非原始问题。
-        audit.audit(id,actor,"ANALYTICS_READ",audit.encode(Map.of("questionHash",Hash.sha3String(question),"result",response)));
         return response;
     }
 }

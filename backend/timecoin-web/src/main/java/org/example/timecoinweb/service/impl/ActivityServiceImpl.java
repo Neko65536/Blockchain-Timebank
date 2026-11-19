@@ -2,7 +2,7 @@ package org.example.timecoinweb.service.impl;
 
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.pojo.Activity;
 import org.example.pojo.PageBean;
 import org.example.timecoinweb.config.BlockchainProperties;

@@ -19,19 +19,30 @@
 
 
     <properties>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <spring-boot.version>4.0.9</spring-boot.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- 与 IDEA 内置 JDK 21+ 编译时兼容；过旧版本会触发 TypeTag :: UNKNOWN -->
-        <lombok.version>1.18.36</lombok.version>
+        <lombok.version>1.18.42</lombok.version>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type><scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <dependencies>
 
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-web</artifactId>
-            <version>5.3.24</version>
+
         </dependency>
 
         <dependency>
@@ -62,8 +73,8 @@
         <!--分页助手-->
         <dependency>
             <groupId>com.github.pagehelper</groupId>
-            <artifactId>pagehelper-spring-boot-starter</artifactId>
-            <version>1.4.2</version>
+            <artifactId>pagehelper</artifactId>
+            <version>6.1.1</version>
         </dependency>
 
         <!--阿里盘OSS-->
@@ -126,7 +137,7 @@
     </repositories>
 
     <build>
-        <!-- 用 JDK 22+ 跑 Maven 时 Lombok 会在 javac 里触发 TypeTag :: UNKNOWN；须让 Maven 使用 JDK 11～21 -->
+        <!-- 编译、测试与运行统一使用JDK21。 -->
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -142,8 +153,8 @@
                         <configuration>
                             <rules>
                                 <requireJavaVersion>
-                                    <version>[11,22)</version>
-                                    <message>用于运行 Maven 的 JDK 版本过新或过旧（需要 11～21）。请在 IntelliJ：Settings → Build Tools → Maven → Runner → JRE 中选择已安装的 JDK 11 或 17（勿用 IDE 自带的过新 JDK 跑 Maven）。也可设置环境变量 JAVA_HOME 指向 JDK 11/17 后再执行 mvn。</message>
+                                    <version>[21,22)</version>
+                                    <message>请设置JAVA_HOME为JDK21，并使用JDK21运行Maven。</message>
                                 </requireJavaVersion>
                             </rules>
                             <fail>true</fail>
@@ -159,7 +170,7 @@
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>3.13.0</version>
                     <configuration>
-                        <release>11</release>
+                        <release>21</release><parameters>true</parameters>
                         <encoding>UTF-8</encoding>
                         <annotationProcessorPaths>
                             <path>

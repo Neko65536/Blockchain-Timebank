@@ -1,7 +1,7 @@
 package org.example.timecoinweb.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -21,6 +21,27 @@ import java.util.Map;
 
 @Service
 public class AiChatService {
+    private volatile io.agentscope.core.model.Model reactModel;
+
+    /** 复用现有模型配置；AgentScope负责原生tool_calls协议和多轮上下文。 */
+    public synchronized io.agentscope.core.model.Model reactModel() {
+        if (!canCallRemote()) throw new IllegalStateException("Agent模型尚未配置");
+        if (reactModel == null) {
+            java.net.URI endpoint=java.net.URI.create(resolveApiUrl());
+            if (!java.util.Set.of("http","https").contains(endpoint.getScheme()) || endpoint.getHost()==null
+                    || endpoint.getUserInfo()!=null || endpoint.getFragment()!=null)
+                throw new IllegalStateException("Agent模型地址不合法");
+            reactModel=io.agentscope.extensions.model.openai.OpenAIChatModel.builder()
+                    .apiKey(apiKey).modelName(model).stream(false)
+                    .baseUrl(endpoint.getScheme()+"://"+endpoint.getRawAuthority())
+                    .endpointPath(endpoint.getRawPath()+(endpoint.getRawQuery()==null?"":"?"+endpoint.getRawQuery()))
+                    .generateOptions(io.agentscope.core.model.GenerateOptions.builder()
+                            .temperature(0.2).maxTokens(Math.min(Math.max(maxTokens,256),4096)).parallelToolCalls(false)
+                            .executionConfig(io.agentscope.core.model.ExecutionConfig.builder()
+                                    .timeout(Duration.ofSeconds(35)).maxAttempts(1).build()).build()).build();
+        }
+        return reactModel;
+    }
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -161,7 +182,7 @@ public class AiChatService {
         if (outputGuard != null) throw new IllegalStateException("模型输出未通过安全校验");
         if (answer.length() > 32000) throw new IllegalStateException("模型工具结果过长");
         JsonNode result = objectMapper.reader()
-                .with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(answer);
+                .with(tools.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(answer);
         if (result == null || !result.isObject()) throw new IllegalStateException("模型未返回工具对象");
         return result;
     }

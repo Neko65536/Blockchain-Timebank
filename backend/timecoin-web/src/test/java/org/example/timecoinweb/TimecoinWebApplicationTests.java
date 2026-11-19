@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.example.utils.JwtUtils;
 import org.example.pojo.Activity;
@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.example.timecoinweb.config.BlockchainProperties;
 import org.example.timecoinweb.service.TimeCoinChainService;
 import org.example.timecoinweb.service.ChainTransactionService;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.web3j.crypto.Credentials;
@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.*;
 })
 class TimecoinWebApplicationTests {
     @Autowired UserService users;
+    @Autowired org.example.timecoinweb.mapper.UserMapper userMapper;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @Autowired BlockchainProperties blockchain;
@@ -59,8 +60,8 @@ class TimecoinWebApplicationTests {
     @Autowired org.example.timecoinweb.agent.PublishConfirmation publishConfirmation;
     @Autowired org.example.timecoinweb.agent.ReviewAgent reviewAgent;
     @Autowired org.example.timecoinweb.agent.AnalyticsAgent analyticsAgent;
-    @org.springframework.boot.test.mock.mockito.SpyBean org.example.timecoinweb.service.AiChatService agentModel;
-    @MockBean(answer = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean org.example.timecoinweb.service.AiChatService agentModel;
+    @MockitoBean(answers = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
 
     @TestConfiguration
     static class SigningConfig {
@@ -97,9 +98,9 @@ class TimecoinWebApplicationTests {
 
     @Test
     void agentConfirmationUsesRealSettlementTransactionAndRejectsOtherOwners() throws Exception {
-        var json=new com.fasterxml.jackson.databind.ObjectMapper();
+        var json=new tools.jackson.databind.ObjectMapper();
         var draft=json.readTree("{\"title\":\"购物\",\"description\":\"陪同\",\"quota\":1,\"phone\":\"123\",\"address\":\"一号门\",\"date\":\"2099-11-20\",\"begin\":\"09:00:00\",\"end\":\"10:00:00\",\"deadline\":\"2099-11-19T18:00:00\",\"volunteerReward\":0,\"serviceType\":\"other_service\",\"extraJson\":\"{\\\"customCategory\\\":\\\"购物\\\",\\\"serviceDetails\\\":\\\"陪同\\\"}\"}");
-        doReturn(draft).when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation -> org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(draft)).when(agentModel).reactModel();
         String id=(String)publishAgent.create(2,"agent-integration-001","陪同购物").get("id");
         assertEquals(0,jdbc.queryForObject("select count(*) from settlement_order",Integer.class));
         mvc.perform(get("/users/old/agent/publish/"+id).header("token",token(3,1))).andExpect(status().isNotFound());
@@ -112,10 +113,54 @@ class TimecoinWebApplicationTests {
         assertEquals("SUBMITTED",publishAgent.get(2,id).get("state"));
     }
 
+    @Test void explicitPageHelperPluginPaginatesAndClearsItsThreadContext(){
+        try(var page=com.github.pagehelper.PageHelper.startPage(2,5)){
+            var result=userMapper.selectUsers((short)2,null,null,null,null);
+            assertEquals(5,result.size());assertEquals(20,page.getTotal());
+        } finally {com.github.pagehelper.PageHelper.clearPage();}
+        assertEquals(20,userMapper.selectUsers((short)2,null,null,null,null).size());
+    }
+
+    @Test void publishReactHttpUsesJackson3AndNeverPublishesWithoutConfirmation() throws Exception {
+        var json=new tools.jackson.databind.ObjectMapper();
+        doAnswer(invocation->org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(json.readTree("{\"title\":\"陪同买菜\"}"))).when(agentModel).reactModel();
+        var pending=mvc.perform(post("/users/old/agent/publish").header("token",token(2,1)).header("Idempotency-Key","react-http-001")
+                .contentType("application/json").content("{\"text\":\"陪同买菜\"}"))
+                .andExpect(request().asyncStarted()).andReturn();
+        var response=mvc.perform(asyncDispatch(pending)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("NEEDS_INPUT"))
+                .andExpect(jsonPath("$.data.draft.title").value("陪同买菜")).andReturn();
+        String id=json.readTree(response.getResponse().getContentAsString()).path("data").path("id").asText();
+        mvc.perform(put("/users/old/agent/publish/"+id).header("token",token(2,1)).contentType("application/json")
+                .content("{\"revision\":0,\"draft\":{\"title\":\"修订草稿\"}}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.revision").value(1));
+        mvc.perform(post("/users/old/agent/publish/"+id+"/confirm").header("token",token(2,1)).contentType("application/json")
+                .content("{\"revision\":1,\"acceptedFee\":\"0\",\"confirmed\":false}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(0));
+        assertEquals(0,jdbc.queryForObject("select count(*) from settlement_order",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from agent_audit where task_id=? and tool='REACT_COMPLETE'",Integer.class,id));
+    }
+
+    @Test void reviewReactChecksAllFiveActivitiesBeforeCompletingWithinBudget() throws Exception {
+        var json=new tools.jackson.databind.ObjectMapper();var predictions=json.createArrayNode();
+        jdbc.update("update activity set status=1 where id=1");
+        for(int id=1;id<=5;id++){
+            if(id>1)jdbc.update("insert into activity(id,title,quota,remain,deadline,date,`begin`,`end`,address,old_id,administrator_id,status) "
+                    +"select ?,title,quota,remain,deadline,date,`begin`,`end`,address,old_id,administrator_id,1 from activity where id=1",id);
+            predictions.addObject().put("activityId",id).put("risk","LOW").put("reason","需要人工核对").putArray("tags");
+        }
+        var plan=json.createObjectNode().set("reviews",predictions);
+        doAnswer(invocation->org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(plan)).when(agentModel).reactModel();
+        assertEquals(5,reviewAgent.screen(1,"react-review-five",List.of(1,2,3,4,5)).size());
+        assertEquals(5,jdbc.queryForObject("select count(*) from agent_audit where tool='inspect_activity'",Integer.class));
+        assertEquals(5,jdbc.queryForObject("select count(*) from agent_review where state='AWAITING_HUMAN' and risk='HIGH'",Integer.class));
+        assertEquals(5,jdbc.queryForObject("select count(*) from activity where status=1",Integer.class));
+    }
+
     private void reviewPrediction(int id) throws Exception {
         jdbc.update("update activity set status=1,address='附近',description='请提供验证码' where id=1");
-        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"reviews\":[{\"activityId\":"+id+",\"risk\":\"LOW\",\"tags\":[],\"reason\":\"模型建议人工核对\"}]}"))
-                .when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation -> org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(new tools.jackson.databind.ObjectMapper().readTree("{\"reviews\":[{\"activityId\":"+id+",\"risk\":\"LOW\",\"tags\":[],\"reason\":\"模型建议人工核对\"}]}")))
+                .when(agentModel).reactModel();
     }
     @Test void reviewRulesCannotBeDowngradedByModelAndHumanDecisionIsAudited() throws Exception {
         reviewPrediction(1);
@@ -149,18 +194,18 @@ class TimecoinWebApplicationTests {
         assertEquals("陪同购物",jdbc.queryForObject("select description from activity where id=1",String.class));
     }
     @Test void revokedRoleDuringModelCallCannotWriteOrReadBusinessData() throws Exception {
-        var json=new com.fasterxml.jackson.databind.ObjectMapper();
-        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=2");return json.readTree("{\"title\":\"买菜\"}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        var json=new tools.jackson.databind.ObjectMapper();
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=2");return org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(json.readTree("{\"title\":\"买菜\"}"));}).when(agentModel).reactModel();
         assertThrows(Exception.class,()->publishAgent.create(2,"revoked-publish-001","买菜"));
         assertEquals(0,jdbc.queryForObject("select count(*) from agent_task",Integer.class));
         jdbc.update("update activity set status=1 where id=1");
-        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return json.readTree("{\"reviews\":[{\"activityId\":1,\"risk\":\"LOW\",\"tags\":[],\"reason\":\"核对\"}]}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(json.readTree("{\"reviews\":[{\"activityId\":1,\"risk\":\"LOW\",\"tags\":[],\"reason\":\"核对\"}]}"));}).when(agentModel).reactModel();
         assertThrows(Exception.class,()->reviewAgent.screen(1,"revoked-review-001",List.of(1)));
         assertEquals(0,jdbc.queryForObject("select count(*) from agent_review",Integer.class));
         jdbc.update("update `user` set role=3 where id=1");
-        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return json.readTree("{\"tool\":\"coin_daily_flow\",\"start\":\"2026-01-01\",\"end\":\"2026-01-02\"}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(json.readTree("{\"tool\":\"coin_daily_flow\",\"start\":\"2026-01-01\",\"end\":\"2026-01-02\"}"));}).when(agentModel).reactModel();
         assertThrows(Exception.class,()->analyticsAgent.answer(1,"时间币趋势"));
-        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit",Integer.class));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit where tool='ANALYTICS_READ'",Integer.class));
     }
     @Test void forgedModelActivityCannotCreateReviewOrModifyAnything() throws Exception {
         reviewPrediction(999);
@@ -170,8 +215,8 @@ class TimecoinWebApplicationTests {
     }
 
     private void analyticsPlan(String tool,java.time.LocalDate start,java.time.LocalDate end) throws Exception {
-        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"tool\":\""+tool+"\",\"start\":\""+start+"\",\"end\":\""+end+"\"}"))
-                .when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation -> org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(new tools.jackson.databind.ObjectMapper().readTree("{\"tool\":\""+tool+"\",\"start\":\""+start+"\",\"end\":\""+end+"\"}")))
+                .when(agentModel).reactModel();
     }
     @Test void analyticsWhitelistAndDateBoundsRejectUnsafeQueries() throws Exception {
         var end=java.time.LocalDate.now();var start=end.minusDays(7);
@@ -181,10 +226,10 @@ class TimecoinWebApplicationTests {
         assertThrows(Exception.class,()->analyticsAgent.answer(1,"查流量"));
         analyticsPlan("coin_daily_flow",start,end);
         assertThrows(Exception.class,()->analyticsAgent.answer(2,"查流量"));
-        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"tool\":\"coin_daily_flow\",\"start\":\""+start+"\",\"end\":\""+end+"\",\"sql\":\"delete from user\"}"))
-                .when(agentModel).planAgentTool(anyString(),anyString());
+        doAnswer(invocation -> org.example.timecoinweb.agent.ScriptedAgentModel.forPlan(new tools.jackson.databind.ObjectMapper().readTree("{\"tool\":\"coin_daily_flow\",\"start\":\""+start+"\",\"end\":\""+end+"\",\"sql\":\"delete from user\"}")))
+                .when(agentModel).reactModel();
         assertThrows(Exception.class,()->analyticsAgent.answer(1,"查流量"));
-        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit",Integer.class));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit where tool='ANALYTICS_READ'",Integer.class));
         mvc.perform(post("/administrator/agent/analytics").header("token",token(2,1)).contentType("application/json").content("{\"question\":\"查流量\"}")).andExpect(status().isForbidden());
     }
     @Test void analyticsCountsOnlyInRangeRetainedRegistrations() throws Exception {

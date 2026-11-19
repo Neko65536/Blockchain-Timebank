@@ -4,7 +4,7 @@
 <mapper namespace="org.example.timecoinweb.mapper.UserMapper">
     <!--修改或更新用户数据-->
     <update id="update">
-        update user
+        update `user`
         <set>
             <if test="username!=null and username!=''">
                 username=#{username},
@@ -46,7 +46,7 @@
     <!-- 批量删除用户操作-->
     <delete id="deleteById">
         delete
-        from user
+        from `user`
         where id in
         <foreach collection="ids" item="id" separator="," open="(" close=")" >
             #{id}
@@ -55,7 +55,7 @@
 
     <!-- 条件查询用户-->
     <select id="selectUsers" resultType="org.example.pojo.User">
-        select * from user
+        select * from `user`
         <where>
             <if test="role!=null">
                 role=#{role}

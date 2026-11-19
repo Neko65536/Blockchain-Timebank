@@ -1,6 +1,6 @@
 package org.example.timecoinweb.rag;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.service.AiChatService;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -87,7 +87,7 @@ class RagTests {
     @Test void generatedAnswerUsesRetrievedEvidenceAndOutputGuard() throws Exception {
         String id=submit(0);knowledge.process(id);ReflectionTestUtils.setField(answers,"mode","model");
         when(model.groundedAnswer(anyString(),anyString())).thenAnswer(call -> {
-            com.fasterxml.jackson.databind.JsonNode evidence=json.readTree((String)call.getArgument(1)).get(0);
+            tools.jackson.databind.JsonNode evidence=json.readTree((String)call.getArgument(1)).get(0);
             return json.writeValueAsString(Map.of("answer","请进入活动列表报名。","citations",List.of(Map.of("chunkId",evidence.path("chunkId").asText(),"quote",evidence.path("text").asText()))));
         });
         assertEquals("MODEL",answers.answer(1,"活动报名").get("mode"));
@@ -97,17 +97,17 @@ class RagTests {
     @Test void revisionChangeDuringGenerationRejectsStaleAnswer() throws Exception {
         String id=submit(0);knowledge.process(id);ReflectionTestUtils.setField(answers,"mode","model");
         when(model.groundedAnswer(anyString(),anyString())).thenAnswer(call -> {
-            com.fasterxml.jackson.databind.JsonNode evidence=json.readTree((String)call.getArgument(1)).get(0);knowledge.disable(id);
+            tools.jackson.databind.JsonNode evidence=json.readTree((String)call.getArgument(1)).get(0);knowledge.disable(id);
             return json.writeValueAsString(Map.of("answer","旧资料回答","citations",List.of(Map.of("chunkId",evidence.path("chunkId").asText(),"quote",evidence.path("text").asText()))));
         });
-        assertEquals(409,assertThrows(ResponseStatusException.class,()->answers.answer(1,"活动报名")).getRawStatusCode());
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->answers.answer(1,"活动报名")).getStatusCode().value());
     }
     @Test void boundedExecutorRejectsExcessWork() throws Exception {
         AiTaskExecutor executor=new AiTaskExecutor();CountDownLatch running=new CountDownLatch(4), release=new CountDownLatch(1);
         try {
             for(int i=0;i<4;i++) executor.submit(()->{running.countDown();try { release.await(); } catch(InterruptedException e) { Thread.currentThread().interrupt(); }return "done";});
             assertTrue(running.await(2,TimeUnit.SECONDS));for(int i=0;i<16;i++) executor.submit(()->"queued");
-            Object result=executor.submit(()->"overflow").getResult();assertTrue(result instanceof ResponseStatusException);assertEquals(503,((ResponseStatusException)result).getRawStatusCode());
+            Object result=executor.submit(()->"overflow").getResult();assertTrue(result instanceof ResponseStatusException);assertEquals(503,((ResponseStatusException)result).getStatusCode().value());
         } finally { release.countDown();executor.close(); }
     }
     @Test void queuedTimeoutRemovesTaskWithoutRunningIt() throws Exception {
@@ -118,7 +118,7 @@ class RagTests {
             assertTrue(running.await(2,TimeUnit.SECONDS));
             org.springframework.web.context.request.async.DeferredResult<?> result=executor.submit(()->{executed.set(true);return "late";});
             ((Runnable)ReflectionTestUtils.getField(result,"timeoutCallback")).run();
-            assertEquals(504,((ResponseStatusException)result.getResult()).getRawStatusCode());
+            assertEquals(504,((ResponseStatusException)result.getResult()).getStatusCode().value());
             ThreadPoolExecutor pool=(ThreadPoolExecutor)ReflectionTestUtils.getField(executor,"pool");assertEquals(0,pool.getQueue().size());assertFalse(executed.get());
         } finally {release.countDown();executor.close();}
     }

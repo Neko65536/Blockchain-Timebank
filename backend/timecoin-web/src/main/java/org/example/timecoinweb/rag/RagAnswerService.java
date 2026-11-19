@@ -1,5 +1,5 @@
 package org.example.timecoinweb.rag;
-import com.fasterxml.jackson.databind.*;
+import tools.jackson.databind.*;
 import org.example.timecoinweb.service.AiChatService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;

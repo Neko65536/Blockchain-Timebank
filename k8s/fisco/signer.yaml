@@ -32,7 +32,7 @@ spec:
         - name: signer
           image: timebank-backend:local
           imagePullPolicy: IfNotPresent
-          command: [java, -Dloader.main=org.example.timecoinweb.signer.SignerMain, -Dsun.net.httpserver.maxReqTime=15, -Dsun.net.httpserver.maxRspTime=15, -cp, /app/app.jar, org.springframework.boot.loader.PropertiesLauncher]
+          command: [java, -Dloader.main=org.example.timecoinweb.signer.SignerMain, -Dsun.net.httpserver.maxReqTime=15, -Dsun.net.httpserver.maxRspTime=15, -cp, /app/app.jar, org.springframework.boot.loader.launch.PropertiesLauncher]
           envFrom: [{configMapRef: {name: fisco-runtime}}]
           env:
             - {name: SIGNER_HOST, value: '0.0.0.0'}

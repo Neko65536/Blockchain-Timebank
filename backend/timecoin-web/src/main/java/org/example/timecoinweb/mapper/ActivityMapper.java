@@ -41,7 +41,7 @@ public interface ActivityMapper {
      * 管理员新增加部门
      * @param activity
      */
-    @Insert("insert into activity(title, quota, deadline, date, begin, end, address, old_id, phone, description, administrator_id, create_time, update_time, message, service_type, extra_json, remain, volunteer_reward, status) " +
+    @Insert("insert into activity(title, quota, deadline, date, `begin`, `end`, address, old_id, phone, description, administrator_id, create_time, update_time, message, service_type, extra_json, remain, volunteer_reward, status) " +
             "values (#{title},#{quota},#{deadline},#{date},#{begin},#{end},#{address},#{oldId},#{phone},#{description},#{administratorId},#{createTime},#{updateTime},#{message},#{serviceType},#{extraJson},#{remain},#{volunteerReward},#{status})")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insert(Activity activity);

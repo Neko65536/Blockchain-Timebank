@@ -1,5 +1,5 @@
 package org.example.timecoinweb.agent;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.config.BlockchainProperties;
 import org.example.timecoinweb.service.*;
 import org.junit.jupiter.api.*;
@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class PublishAgentTests {
-    final ObjectMapper json=new ObjectMapper().findAndRegisterModules();
+    final ObjectMapper json=tools.jackson.databind.json.JsonMapper.builder().configureForJackson2().build();
     final AiChatService model=mock(AiChatService.class);
     final UserService users=mock(UserService.class);
     PublishAgent agent; PublishConfirmation confirm; JdbcTemplate jdbc;
@@ -22,16 +22,16 @@ class PublishAgentTests {
         jdbc=new JdbcTemplate(ds);jdbc.execute("create table `user`(id int primary key,role int)");jdbc.update("insert into `user` values(1,1),(2,1),(3,3)");
         var config=new BlockchainProperties();config.setEnabled(false);
         var validator=new ActivityDraftValidator(json,config);
-        agent=new PublishAgent(jdbc,json,model,validator,new DataSourceTransactionManager(ds),config);
+        agent=new PublishAgent(jdbc,json,new AgentRuntime(model,json,jdbc),validator,new DataSourceTransactionManager(ds),config);
         confirm=new PublishConfirmation(agent,validator,jdbc,users);
-        when(model.planAgentTool(anyString(),anyString())).thenReturn(json.readTree("{\"title\":\"陪同购物\"}"));
+        when(model.reactModel()).thenAnswer(call -> ScriptedAgentModel.forPlan(json.readTree("{\"title\":\"陪同购物\"}")));
     }
     @Test void repeatCreationReusesTaskAndNeverPublishes() throws Exception {
         var first=agent.create(1,"request-001","买菜");
         assertEquals(first.get("id"),agent.create(1,"request-001","买菜").get("id"));
         assertEquals("NEEDS_INPUT",first.get("state"));
         assertThrows(Exception.class,()->agent.create(1,"request-001","其他需求"));
-        verify(model,times(1)).planAgentTool(anyString(),anyString());verifyNoInteractions(users);
+        verify(model,times(1)).reactModel();verifyNoInteractions(users);
     }
     @Test void ownershipAndRevisionAreEnforced() throws Exception {
         String id=(String)agent.create(1,"request-002","买菜").get("id");

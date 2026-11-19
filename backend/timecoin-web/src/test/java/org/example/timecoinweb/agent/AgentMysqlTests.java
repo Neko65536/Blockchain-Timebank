@@ -1,5 +1,5 @@
 package org.example.timecoinweb.agent;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.example.timecoinweb.service.AiChatService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -24,18 +24,18 @@ class AgentMysqlTests {
         jdbc.execute("create table if not exists activity(id int primary key,title varchar(255))");
         jdbc.execute("create table if not exists activity_volunteer(activity_id int,create_time datetime)");
         jdbc.execute("create table if not exists chain_tx_log(tx_type varchar(16),amount bigint,create_time datetime)");
-        var json=new ObjectMapper();var model=mock(AiChatService.class);var auth=mock(ReviewAgent.class);var audit=mock(PublishAgent.class);
-        var agent=new AnalyticsAgent(model,auth,jdbc,audit);
+        var json=new ObjectMapper();var model=mock(AgentRuntime.class);var auth=mock(ReviewAgent.class);var audit=mock(PublishAgent.class);
+        var agent=new AnalyticsAgent(model,auth,jdbc,audit,json);
         LocalDate end=LocalDate.now(),start=end.minusDays(2);
         new TransactionTemplate(new DataSourceTransactionManager(ds)).execute(tx->{
             try {
                 jdbc.update("insert into activity(id,title) values(-9001,'合成测试')");
                 jdbc.update("insert into activity_volunteer(activity_id,create_time) values(-9001,?),(-9001,?)",start.atStartOfDay(),end.atStartOfDay());
-                when(model.planAgentTool(anyString(),anyString())).thenReturn(json.readTree("{\"tool\":\"activity_registration_top\",\"start\":\""+start+"\",\"end\":\""+end+"\"}"));
-                var result=agent.answer(1,"报名排行");var rows=(List<Map<String,Object>>)result.get("rows");assertEquals("1",rows.get(0).get("value"));
+                var registrationPlan=json.readTree("{\"tool\":\"activity_registration_top\",\"start\":\""+start+"\",\"end\":\""+end+"\"}");
+                var result=agent.query(1,registrationPlan,"mysql-test");var rows=(List<Map<String,Object>>)result.get("rows");assertEquals("1",rows.get(0).get("value"));
                 jdbc.update("insert into chain_tx_log(tx_type,amount,create_time) values('TRANSFER',17,?),('MINT',100,?),('TRANSFER',99,?)",start.atStartOfDay(),start.atStartOfDay(),end.atStartOfDay());
-                when(model.planAgentTool(anyString(),anyString())).thenReturn(json.readTree("{\"tool\":\"coin_daily_flow\",\"start\":\""+start+"\",\"end\":\""+end+"\"}"));
-                rows=(List<Map<String,Object>>)agent.answer(1,"流转趋势").get("rows");
+                var flowPlan=json.readTree("{\"tool\":\"coin_daily_flow\",\"start\":\""+start+"\",\"end\":\""+end+"\"}");
+                rows=(List<Map<String,Object>>)agent.query(1,flowPlan,"mysql-test").get("rows");
                 assertEquals("17",rows.get(0).get("value"));assertEquals("0",rows.get(1).get("value"));
                 assertEquals(0,jdbc.queryForObject("select count(*) from agent_review",Integer.class));
             }catch(Exception e){throw new RuntimeException(e);}finally{tx.setRollbackOnly();}
