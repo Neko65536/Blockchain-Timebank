@@ -55,6 +55,7 @@ public class ReviewAgent {
         }
         return new TransactionTemplate(manager).execute(tx->{
             jdbc.queryForObject("select id from `user` where id=? for update",Integer.class,actor);
+            requireAdmin(actor);
             var duplicate=existing(actor,key,hash);if(duplicate!=null)return duplicate;
             String batch=UUID.randomUUID().toString();
             jdbc.update("insert into agent_review_batch(id,actor_id,request_key,input_hash) values(?,?,?,?)",batch,actor,key,hash);
@@ -101,7 +102,8 @@ public class ReviewAgent {
     private List<String> ruleTags(Activity a){
         List<String> tags=new ArrayList<>();
         if(a.getAddress()==null || a.getAddress().trim().length()<6 || a.getAddress().matches(".*(附近|待定|到时联系|另行通知).*"))tags.add("地址不明确");
-        if(a.getDescription()==null || a.getDescription().isBlank() || a.getDate()==null || a.getBegin()==null || a.getEnd()==null)tags.add("信息缺失");
+        var fieldIssues=validator.issues(a,java.time.LocalDateTime.now());
+        if(!fieldIssues.isEmpty()){tags.add("信息缺失或字段校验未通过");tags.addAll(fieldIssues);}
         String text=String.valueOf(a.getTitle())+" "+String.valueOf(a.getDescription());
         for(String word:sensitiveTerms.split(","))if(!word.isBlank() && text.contains(word.trim())){tags.add("命中敏感内容规则");break;}
         return tags;

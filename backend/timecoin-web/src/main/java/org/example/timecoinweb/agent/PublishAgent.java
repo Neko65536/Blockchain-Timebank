@@ -39,6 +39,7 @@ public class PublishAgent {
         return new TransactionTemplate(manager).execute(tx->{
             // 并发重复生成只允许落库一次；模型调用不占数据库事务。
             jdbc.queryForObject("select id from `user` where id=? for update",Integer.class,actor);
+            requireElder(actor);
             var duplicate=jdbc.queryForList("select id,input_hash from agent_task where owner_id=? and request_key=?",actor,key);
             if(!duplicate.isEmpty()){sameInput(duplicate.get(0),hash);return get(actor,(String)duplicate.get(0).get("id"));}
             String id=UUID.randomUUID().toString();

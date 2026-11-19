@@ -58,6 +58,7 @@ class TimecoinWebApplicationTests {
     @Autowired org.example.timecoinweb.agent.PublishAgent publishAgent;
     @Autowired org.example.timecoinweb.agent.PublishConfirmation publishConfirmation;
     @Autowired org.example.timecoinweb.agent.ReviewAgent reviewAgent;
+    @Autowired org.example.timecoinweb.agent.AnalyticsAgent analyticsAgent;
     @org.springframework.boot.test.mock.mockito.SpyBean org.example.timecoinweb.service.AiChatService agentModel;
     @MockBean(answer = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
 
@@ -138,11 +139,73 @@ class TimecoinWebApplicationTests {
         assertThrows(Exception.class,()->reviewAgent.screen(2,"review-key-003",List.of(1)));
         mvc.perform(get("/administrator/agent/reviews").header("token",token(2,1))).andExpect(status().isForbidden());
     }
+    @Test void completeReviewedActivityCanBeApprovedWithoutChangingItsForm() throws Exception {
+        reviewPrediction(1);
+        jdbc.update("update activity set address='社区东区一号门',description='陪同购物',phone='123',extra_json=? where id=1","{\"customCategory\":\"购物\",\"serviceDetails\":\"陪同\"}");
+        var rows=reviewAgent.screen(1,"review-approve-001",List.of(1));
+        assertEquals("LOW",rows.get(0).get("risk"));
+        reviewAgent.decide(1,(String)rows.get(0).get("id"),"APPROVE","已逐项核对资料",true);
+        assertEquals(2,jdbc.queryForObject("select status from activity where id=1",Integer.class));
+        assertEquals("陪同购物",jdbc.queryForObject("select description from activity where id=1",String.class));
+    }
+    @Test void revokedRoleDuringModelCallCannotWriteOrReadBusinessData() throws Exception {
+        var json=new com.fasterxml.jackson.databind.ObjectMapper();
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=2");return json.readTree("{\"title\":\"买菜\"}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        assertThrows(Exception.class,()->publishAgent.create(2,"revoked-publish-001","买菜"));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_task",Integer.class));
+        jdbc.update("update activity set status=1 where id=1");
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return json.readTree("{\"reviews\":[{\"activityId\":1,\"risk\":\"LOW\",\"tags\":[],\"reason\":\"核对\"}]}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        assertThrows(Exception.class,()->reviewAgent.screen(1,"revoked-review-001",List.of(1)));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_review",Integer.class));
+        jdbc.update("update `user` set role=3 where id=1");
+        doAnswer(invocation->{jdbc.update("update `user` set role=2 where id=1");return json.readTree("{\"tool\":\"coin_daily_flow\",\"start\":\"2026-01-01\",\"end\":\"2026-01-02\"}");}).when(agentModel).planAgentTool(anyString(),anyString());
+        assertThrows(Exception.class,()->analyticsAgent.answer(1,"时间币趋势"));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit",Integer.class));
+    }
     @Test void forgedModelActivityCannotCreateReviewOrModifyAnything() throws Exception {
         reviewPrediction(999);
         assertThrows(Exception.class,()->reviewAgent.screen(1,"review-key-004",List.of(1)));
         assertEquals(0,jdbc.queryForObject("select count(*) from agent_review",Integer.class));
         assertEquals(1,jdbc.queryForObject("select status from activity where id=1",Integer.class));
+    }
+
+    private void analyticsPlan(String tool,java.time.LocalDate start,java.time.LocalDate end) throws Exception {
+        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"tool\":\""+tool+"\",\"start\":\""+start+"\",\"end\":\""+end+"\"}"))
+                .when(agentModel).planAgentTool(anyString(),anyString());
+    }
+    @Test void analyticsWhitelistAndDateBoundsRejectUnsafeQueries() throws Exception {
+        var end=java.time.LocalDate.now();var start=end.minusDays(7);
+        analyticsPlan("select * from user",start,end);
+        assertThrows(Exception.class,()->analyticsAgent.answer(1,"查询账号"));
+        analyticsPlan("coin_daily_flow",start.minusDays(32),end);
+        assertThrows(Exception.class,()->analyticsAgent.answer(1,"查流量"));
+        analyticsPlan("coin_daily_flow",start,end);
+        assertThrows(Exception.class,()->analyticsAgent.answer(2,"查流量"));
+        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"tool\":\"coin_daily_flow\",\"start\":\""+start+"\",\"end\":\""+end+"\",\"sql\":\"delete from user\"}"))
+                .when(agentModel).planAgentTool(anyString(),anyString());
+        assertThrows(Exception.class,()->analyticsAgent.answer(1,"查流量"));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit",Integer.class));
+        mvc.perform(post("/administrator/agent/analytics").header("token",token(2,1)).contentType("application/json").content("{\"question\":\"查流量\"}")).andExpect(status().isForbidden());
+    }
+    @Test void analyticsCountsOnlyInRangeRetainedRegistrations() throws Exception {
+        var end=java.time.LocalDate.now();var start=end.minusDays(7);
+        jdbc.update("insert into activity_volunteer(activity_id,volunteer_id,create_time) values(1,10,?),(1,11,?),(1,12,?)",start.atStartOfDay(),start.plusDays(1).atStartOfDay(),end.atStartOfDay());
+        analyticsPlan("activity_registration_top",start,end);
+        var result=analyticsAgent.answer(1,"上周哪个活动报名最多");
+        var rows=(List<Map<String,Object>>)result.get("rows");
+        assertEquals(1,rows.size());assertEquals("2",rows.get(0).get("value"));
+        assertEquals(3,jdbc.queryForObject("select count(*) from activity_volunteer",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from agent_audit where tool='ANALYTICS_READ'",Integer.class));
+    }
+    @Test void analyticsFlowExcludesMintAndEndBoundaryAndFillsMissingDays() throws Exception {
+        var end=java.time.LocalDate.now();var start=end.minusDays(2);
+        jdbc.update("insert into chain_tx_log(tx_type,to_account,amount,create_time) values('TRANSFER','1',7,?),('TRANSFER','1',8,?),('MINT','1',100,?),('TRANSFER','1',99,?)",start.atStartOfDay(),start.atTime(12,0),start.atTime(13,0),end.atStartOfDay());
+        analyticsPlan("coin_daily_flow",start,end);
+        var result=analyticsAgent.answer(1,"时间币流转趋势");
+        var rows=(List<Map<String,Object>>)result.get("rows");
+        assertEquals(2,rows.size());assertEquals("15",rows.get(0).get("value"));assertEquals("0",rows.get(1).get("value"));
+        assertTrue(result.get("answer").toString().contains("15时间币"));
+        assertEquals(4,jdbc.queryForObject("select count(*) from chain_tx_log",Integer.class));
     }
 
     @Test

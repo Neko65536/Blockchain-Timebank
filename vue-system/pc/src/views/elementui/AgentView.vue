@@ -1,5 +1,6 @@
 <template>
   <div>
+    <analytics-agent-panel />
     <h2>审核预筛Agent</h2>
     <p>每批最多5条。风险标签仅供辅助，所有活动仍由管理员明确决定；活动修改后须重新预筛。</p>
     <el-button :loading="busy" @click="reload">刷新</el-button>
@@ -22,7 +23,9 @@
 </template>
 <script>
 import request from '@/utils/request';
+import AnalyticsAgentPanel from '@/components/AnalyticsAgentPanel.vue';
 export default {
+  components: { AnalyticsAgentPanel },
   data:()=>({busy:false,candidates:[],selected:[],reviews:[],key:null,snapshot:null,snapshotOpen:false,
     snapshotFields:[{key:'title',label:'标题'},{key:'description',label:'描述'},{key:'address',label:'地址'},{key:'date',label:'日期'},{key:'begin',label:'开始时间'},{key:'end',label:'结束时间'},{key:'quota',label:'名额'},{key:'volunteerReward',label:'每人答谢'}]}),
   mounted(){this.reload();},
@@ -34,7 +37,7 @@ export default {
     findings(row){return JSON.parse(row.findings);},
     showSnapshot(row){this.snapshot=JSON.parse(row.snapshot);this.snapshotOpen=true;},
     screen(){const ids=this.selected.map(x=>x.id).sort((a,b)=>a-b), signature=JSON.stringify(ids);if(!this.key || this.key.signature!==signature)this.key={signature,value:'review-'+Date.now()+'-'+Math.random().toString(36).slice(2)};
-      return this.run(async()=>{this.unwrap(await request.post('/administrator/agent/reviews',{ids},{headers:{'Idempotency-Key':this.key.value},timeout:150000}));await this.load();});},
+      return this.run(async()=>{this.unwrap(await request.post('/administrator/agent/reviews',{ids},{headers:{'Idempotency-Key':this.key.value},timeout:150000}));this.key=null;await this.load();});},
     async decide(row,decision){let value;try{({value}=await this.$prompt('请核对快照，并填写'+(decision==='APPROVE'?'通过':'拒绝')+'理由。此操作将正式修改活动审核状态。','人工确认',{inputValidator:v=>!!v && v.trim().length>0 && v.length<=500,inputErrorMessage:'请填写1至500字理由'}));}catch(e){return;}
       return this.run(async()=>{this.unwrap(await request.post('/administrator/agent/reviews/'+row.id+'/decision',{decision,note:value,confirmed:true}));await this.load();});}
   }
