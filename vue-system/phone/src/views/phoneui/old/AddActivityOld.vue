@@ -8,14 +8,14 @@
         <el-step title="提交"></el-step>
       </el-steps>
     </div>
-    
+
     <el-main>
       <router-view @next="next"></router-view>
     </el-main>
-    
+
   </div>
 </template>
-  
+
 <script>
 import PublishAgentPanel from '@/components/PublishAgentPanel.vue';
 
@@ -35,7 +35,7 @@ export default {
     }
 };
 </script>
-  
+
 <style lang="scss" scoped>
 .mobile-form {
   padding: 20px;
@@ -52,4 +52,4 @@ export default {
   }
 }
 </style>
-  
+

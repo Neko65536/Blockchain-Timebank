@@ -20,3 +20,27 @@ CREATE TABLE IF NOT EXISTS agent_audit (
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  INDEX ix_agent_audit_task(task_id,created_at)
 );
+CREATE TABLE IF NOT EXISTS agent_review_batch (
+ id VARCHAR(36) PRIMARY KEY,
+ actor_id INT NOT NULL,
+ request_key VARCHAR(100) NOT NULL,
+ input_hash VARCHAR(66) NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(actor_id,request_key)
+);
+CREATE TABLE IF NOT EXISTS agent_review (
+ id VARCHAR(36) PRIMARY KEY,
+ batch_id VARCHAR(36) NOT NULL,
+ activity_id INT NOT NULL,
+ snapshot_hash VARCHAR(66) NOT NULL,
+ snapshot TEXT NOT NULL,
+ risk VARCHAR(12) NOT NULL,
+ findings TEXT NOT NULL,
+ state VARCHAR(24) NOT NULL,
+ reviewer_id INT,
+ decision VARCHAR(12),
+ note VARCHAR(500),
+ decided_at TIMESTAMP NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX ix_agent_review_batch(batch_id)
+);

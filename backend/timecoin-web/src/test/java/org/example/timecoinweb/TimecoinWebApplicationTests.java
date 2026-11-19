@@ -57,6 +57,7 @@ class TimecoinWebApplicationTests {
     @Autowired org.example.timecoinweb.service.SettlementService settlements;
     @Autowired org.example.timecoinweb.agent.PublishAgent publishAgent;
     @Autowired org.example.timecoinweb.agent.PublishConfirmation publishConfirmation;
+    @Autowired org.example.timecoinweb.agent.ReviewAgent reviewAgent;
     @org.springframework.boot.test.mock.mockito.SpyBean org.example.timecoinweb.service.AiChatService agentModel;
     @MockBean(answer = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
 
@@ -69,6 +70,8 @@ class TimecoinWebApplicationTests {
     void fixtures() {
         jdbc.update("delete from agent_audit");
         jdbc.update("delete from agent_task");
+        jdbc.update("delete from agent_review");
+        jdbc.update("delete from agent_review_batch");
         blockchain.setEnabled(false);
         jdbc.update("delete from settlement_outbox");
         jdbc.update("delete from settlement_order");
@@ -106,6 +109,40 @@ class TimecoinWebApplicationTests {
         assertEquals(1,jdbc.queryForObject("select count(*) from settlement_order where owner_id=2",Integer.class));
         assertEquals(1,jdbc.queryForObject("select count(*) from activity where title='购物' and old_id=1",Integer.class));
         assertEquals("SUBMITTED",publishAgent.get(2,id).get("state"));
+    }
+
+    private void reviewPrediction(int id) throws Exception {
+        jdbc.update("update activity set status=1,address='附近',description='请提供验证码' where id=1");
+        doReturn(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"reviews\":[{\"activityId\":"+id+",\"risk\":\"LOW\",\"tags\":[],\"reason\":\"模型建议人工核对\"}]}"))
+                .when(agentModel).planAgentTool(anyString(),anyString());
+    }
+    @Test void reviewRulesCannotBeDowngradedByModelAndHumanDecisionIsAudited() throws Exception {
+        reviewPrediction(1);
+        var rows=reviewAgent.screen(1,"review-key-001",List.of(1));
+        String id=(String)rows.get(0).get("id");
+        assertEquals("HIGH",rows.get(0).get("risk"));
+        assertEquals(1,jdbc.queryForObject("select status from activity where id=1",Integer.class));
+        assertEquals(id,reviewAgent.screen(1,"review-key-001",List.of(1)).get(0).get("id"));
+        assertThrows(Exception.class,()->reviewAgent.decide(1,id,"APPROVE","已核实",false));
+        reviewAgent.decide(1,id,"REJECT","信息不足，需重新补充",true);
+        reviewAgent.decide(1,id,"REJECT","信息不足，需重新补充",true);
+        assertEquals(4,jdbc.queryForObject("select status from activity where id=1",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from agent_audit where task_id=? and tool='HUMAN_REVIEW'",Integer.class,id));
+        assertThrows(Exception.class,()->reviewAgent.decide(1,id,"APPROVE","改为通过",true));
+    }
+    @Test void staleReviewAndUnauthorizedAccessAreRejected() throws Exception {
+        reviewPrediction(1);String id=(String)reviewAgent.screen(1,"review-key-002",List.of(1)).get(0).get("id");
+        jdbc.update("update activity set address='已修改的社区东门' where id=1");
+        assertThrows(Exception.class,()->reviewAgent.decide(1,id,"APPROVE","已核实",true));
+        assertEquals(1,jdbc.queryForObject("select status from activity where id=1",Integer.class));
+        assertThrows(Exception.class,()->reviewAgent.screen(2,"review-key-003",List.of(1)));
+        mvc.perform(get("/administrator/agent/reviews").header("token",token(2,1))).andExpect(status().isForbidden());
+    }
+    @Test void forgedModelActivityCannotCreateReviewOrModifyAnything() throws Exception {
+        reviewPrediction(999);
+        assertThrows(Exception.class,()->reviewAgent.screen(1,"review-key-004",List.of(1)));
+        assertEquals(0,jdbc.queryForObject("select count(*) from agent_review",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select status from activity where id=1",Integer.class));
     }
 
     @Test

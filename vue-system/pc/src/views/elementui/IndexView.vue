@@ -62,6 +62,7 @@
             </el-menu-item>
           </router-link>
           <router-link to="/knowledgeView" class="RouterLink"><el-menu-item index="knowledge"><i class="el-icon-reading"></i><span v-if="!isCollapse" slot="title">知识库管理</span></el-menu-item></router-link>
+          <router-link to="/agentView" class="RouterLink"><el-menu-item index="agent"><i class="el-icon-magic-stick"></i><span v-if="!isCollapse" slot="title">Agent工作台</span></el-menu-item></router-link>
           <router-link to="/noticeManageView" class="RouterLink">
             <el-menu-item index="3a">
               <i class="el-icon-bell"></i>
@@ -176,6 +177,8 @@ export default {
             return '待追讨记录';
           case '/knowledgeView':
             return '知识库管理';
+          case '/agentView':
+              return 'Agent工作台';
           case '/noticeManageView':
             return '公告管理';
           default:
