@@ -33,7 +33,7 @@ public class ShardingDataSourceConfig {
             JdbcTemplate jdbc=new JdbcTemplate(physical);
             if(initialize) {
                 ResourceDatabasePopulator init=new ResourceDatabasePopulator();
-                for(String file:List.of("schema-mysql.sql","schema-chain-submission.sql","schema-settlement.sql","schema-rag.sql","schema-query-indexes-mysql.sql")) init.addScript(new ClassPathResource(file));
+                for(String file:List.of("schema-mysql.sql","schema-chain-submission.sql","schema-settlement.sql","schema-rag.sql","schema-agent.sql","schema-query-indexes-mysql.sql")) init.addScript(new ClassPathResource(file));
                 init.execute(physical);
                 jdbc.execute("create table if not exists shard_locator(kind varchar(24) not null,lookup_key varchar(100) not null,created_at datetime not null,primary key(kind,lookup_key))");
             }

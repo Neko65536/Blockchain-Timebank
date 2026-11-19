@@ -1,5 +1,17 @@
 # 基于区块链的时间币服务系统
 
+## Agent实施进展（2026-11-19）
+
+用户已启动原规划中暂缓的三个Agent，开发分支`codex/agents`，实施顺序为活动发布编排→审核预筛→运营问答。下文“Agent暂不实施”的描述是此前交付范围，不能据此推断新Agent已经交付。
+
+共用基础：`ActivityDraftValidator`拒绝模型设置身份、审核状态等受保护字段，严格校验名额/答谢整数和日期顺序，返回缺失字段而不猜测；`AiChatService.planAgentTool`复用模型配置与guardrail，要求单个严格JSON对象，模型未配置或输出异常时显式失败，不回退到模板冒充执行结果。Agent是受限工作流，不是可任意调用工具的自治系统。
+
+**Agent-1已实现。** 用户已确认发布边界：Agent只生成草稿、收集字段补充并校验，由用户在移动端“发布活动”中的新面板明确确认表单及当前发布费。独立`PublishConfirmation`才调用原`UserService.oldAddActivity`与结算流程，未把该入口暴露给模型。用户确认属于原发布收费语义，不新增“AI签名”或绕过管理多签；每人答谢只是表单配置，不在这里支付。
+
+`POST /users/old/agent/publish`携带`Idempotency-Key`创建任务，`GET /{id}`恢复，`PUT /{id}`携带revision与draft补充，`POST /{id}/confirm`携带revision、acceptedFee、confirmed=true确认。身份来自已验证token的请求上下文，不接收ownerId。任务持久化为NEEDS_INPUT→READY→SUBMITTED，草稿变化用乐观版本控制，确认加行锁并在同一事务保存结算结果及审计；重复确认复用原结算编号，时间过期/费用变化拒绝。模型调用在事务外，唯一业务键避免重复落库；已知任务可按编号恢复，尚无个人历史任务列表。步骤记录存`agent_audit`，不存token。建表脚本`schema-agent.sql`已加入MySQL/H2及分片初始化；关闭初始化的部署须先手动执行该脚本。
+
+Agent-1集中验证：完整后端97项，78通过、19项外部集成跳过（`agent1-tests.log`）；追加真实H2结算事务及权限验证后定向44项全通过（`agent1-confirmation-tests.log`），包含重复确认只生成一条订单、越权、旧版本、未确认不发布、缺失字段和模型异常输出。移动端构建通过（`agent1-phone-build.log`），保留既有资源体积/Sass告警。远程模型只用本地HTTP替身，未声明真实模型效果或浏览器交互验收。Agent-2/3仍在实现中。
+
 ## 改进规划执行记录（更新至2026-11-18）
 
 已同步目标仓库至`f79000f`，后续按A→B→C→D→E→F→G推进，每完成一大项后统一验证和更新现有文档。Agent部分保留规划中的“暂不实施”范围。规划中的工作量、兼容性和简历措辞需要以实际实现及验证为准。

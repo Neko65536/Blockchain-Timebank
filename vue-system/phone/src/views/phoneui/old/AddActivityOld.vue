@@ -1,5 +1,6 @@
 <template>
   <div class="mobile-form">
+    <publish-agent-panel />
     <div class="header">
       <el-steps :active="active" finish-status="success">
         <el-step title="填写活动详情"></el-step>
@@ -16,8 +17,10 @@
 </template>
   
 <script>
+import PublishAgentPanel from '@/components/PublishAgentPanel.vue';
 
 export default {
+    components: { PublishAgentPanel },
     name: 'AddActivityOld',
     data() {
         return {

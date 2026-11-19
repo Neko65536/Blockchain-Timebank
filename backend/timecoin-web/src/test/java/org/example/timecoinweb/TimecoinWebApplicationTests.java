@@ -55,6 +55,9 @@ class TimecoinWebApplicationTests {
     @Autowired ChainTransactionService submissions;
     @Autowired org.example.timecoinweb.config.ShardRouting routing;
     @Autowired org.example.timecoinweb.service.SettlementService settlements;
+    @Autowired org.example.timecoinweb.agent.PublishAgent publishAgent;
+    @Autowired org.example.timecoinweb.agent.PublishConfirmation publishConfirmation;
+    @org.springframework.boot.test.mock.mockito.SpyBean org.example.timecoinweb.service.AiChatService agentModel;
     @MockBean(answer = org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
 
     @TestConfiguration
@@ -64,6 +67,8 @@ class TimecoinWebApplicationTests {
 
     @BeforeEach
     void fixtures() {
+        jdbc.update("delete from agent_audit");
+        jdbc.update("delete from agent_task");
         blockchain.setEnabled(false);
         jdbc.update("delete from settlement_outbox");
         jdbc.update("delete from settlement_order");
@@ -84,6 +89,23 @@ class TimecoinWebApplicationTests {
         }
         jdbc.update("insert into activity (id,title,quota,remain,deadline,date,`begin`,`end`,address,old_id,administrator_id,status) "
                 + "values (1,'test',5,5,DATEADD('DAY',1,CURRENT_TIMESTAMP),DATEADD('DAY',2,CURRENT_DATE),'09:00:00','10:00:00','test',1,1,2)");
+    }
+
+    @Test
+    void agentConfirmationUsesRealSettlementTransactionAndRejectsOtherOwners() throws Exception {
+        var json=new com.fasterxml.jackson.databind.ObjectMapper();
+        var draft=json.readTree("{\"title\":\"购物\",\"description\":\"陪同\",\"quota\":1,\"phone\":\"123\",\"address\":\"一号门\",\"date\":\"2099-11-20\",\"begin\":\"09:00:00\",\"end\":\"10:00:00\",\"deadline\":\"2099-11-19T18:00:00\",\"volunteerReward\":0,\"serviceType\":\"other_service\",\"extraJson\":\"{\\\"customCategory\\\":\\\"购物\\\",\\\"serviceDetails\\\":\\\"陪同\\\"}\"}");
+        doReturn(draft).when(agentModel).planAgentTool(anyString(),anyString());
+        String id=(String)publishAgent.create(2,"agent-integration-001","陪同购物").get("id");
+        assertEquals(0,jdbc.queryForObject("select count(*) from settlement_order",Integer.class));
+        mvc.perform(get("/users/old/agent/publish/"+id).header("token",token(3,1))).andExpect(status().isNotFound());
+        mvc.perform(get("/users/old/agent/publish/"+id).header("token",token(10,2))).andExpect(status().isForbidden());
+        assertThrows(Exception.class,()->publishConfirmation.confirm(2,id,0,"0",false));
+        publishConfirmation.confirm(2,id,0,"0",true);
+        publishConfirmation.confirm(2,id,0,"0",true);
+        assertEquals(1,jdbc.queryForObject("select count(*) from settlement_order where owner_id=2",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from activity where title='购物' and old_id=1",Integer.class));
+        assertEquals("SUBMITTED",publishAgent.get(2,id).get("state"));
     }
 
     @Test

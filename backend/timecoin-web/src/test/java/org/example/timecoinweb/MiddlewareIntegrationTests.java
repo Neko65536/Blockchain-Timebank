@@ -36,7 +36,7 @@ import static org.mockito.ArgumentMatchers.*;
         "spring.datasource.url=${test.datasource-url:jdbc:h2:mem:p1middleware;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${test.datasource-driver:org.h2.Driver}",
         "spring.datasource.username=${test.datasource-user:sa}", "spring.datasource.password=${test.datasource-password:}",
-        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql,classpath:schema-rag.sql,${test.index-schema:classpath:schema-query-indexes-h2.sql}",
+        "spring.sql.init.schema-locations=${test.schema:classpath:schema-h2.sql},classpath:schema-chain-submission.sql,classpath:schema-settlement.sql,classpath:schema-rag.sql,classpath:schema-agent.sql,${test.index-schema:classpath:schema-query-indexes-h2.sql}",
         "security.jwt-secret=test-only-p1-middleware-secret-32-bytes", "ai.chat.enabled=false",
         "settlement.mq-enabled=true", "settlement.dispatch-initial-ms=3600000", "settlement.dispatch-ms=3600000",
         "spring.rabbitmq.port=${test.rabbit-port:5673}", "spring.rabbitmq.listener.simple.auto-startup=false",
