@@ -1,0 +1,40 @@
+{
+  "version": "timebank-rag-v1",
+  "description": "按当前代码整理的初版标注小样本，尚待人工复核：用于离线回归和诊断，不是独立用户测试集。文档仅装入评测内存库。",
+  "documents": [
+    {"id":"draft","audience":1,"title":"活动草稿补充","source":"agent/PublishAgent.java","text":"活动草稿由老人发起。缺少日期、地址、电话或名额等信息时，草稿状态为NEEDS_INPUT，需要用户补充；信息齐全并通过校验后，草稿状态为READY。草稿生成不会直接发布活动。"},
+    {"id":"confirm","audience":1,"title":"确认发布与费用","source":"agent/PublishConfirmation.java","text":"发布活动前须由用户明确确认，并核对当前发布费用和草稿版本。Agent只能生成和校验草稿，不能调用支付工具；用户确认后由原发布接口处理发布费。重复确认复用原结算编号。"},
+    {"id":"review","audience":3,"title":"活动风险预筛","source":"agent/ReviewAgent.java","text":"管理员每批可以选择一至五个待审核活动进行风险预筛。所有预筛结果均等待人工审核，高风险提示不自动改变活动状态，低风险也不会自动批准。活动内容变化后旧预筛结果不能用于审批，需要重新预筛。"},
+    {"id":"analytics","audience":3,"title":"运营统计查询","source":"agent/AnalyticsAgent.java","text":"运营问答仅允许管理员查询活动报名排行和时间币每日流转趋势，查询范围为一至三十一天。时间币趋势仅汇总已入账的TRANSFER转账，排除MINT铸币，无记录日期补零，不代表用户余额或净流量。"},
+    {"id":"disable","audience":0,"title":"知识文档禁用","source":"rag/KnowledgeService.java","text":"禁用知识文档时会删除其检索分块并增加知识库版本。已禁用文档不能被重复消费重新启用。问答生成期间知识库版本发生变化时，该次旧答案会被拒绝，用户需要重新提问。"},
+    {"id":"citation","audience":0,"title":"知识问答引用","source":"rag/RagAnswerService.java","text":"知识问答的模型引用必须来自本次检索结果，每段引文为十二至五百字的原文连续片段，不允许伪造分块编号。没有足够检索依据时返回NO_EVIDENCE，提醒用户补充问题或向社区工作人员核实。"},
+    {"id":"embedding","audience":0,"title":"向量模式说明","source":"rag/EmbeddingService.java","text":"local-hash模式只用于离线词面相似度验证，不是真实语义Embedding。remote模式需要配置Embedding接口、模型和密钥，远端请求失败会报错，不会静默降级为离线模式。"},
+    {"id":"index","audience":0,"title":"知识检索权限","source":"rag/InMemoryVectorIndex.java","text":"知识检索先按受众角色筛选资料：公共资料对所有角色可见，老人和志愿者只能检索自身角色的专属资料，管理员可检索所有角色资料。检索仅使用状态为READY且Embedding配置一致的文档。"}
+  ],
+  "cases": [
+    {"id":"q01","role":1,"question":"活动草稿缺少地址和电话时是什么状态？","expected":"ANSWER","expectedAnswer":"NEEDS_INPUT，需要用户补充。","evidence":[{"document":"draft","quote":"草稿状态为NEEDS_INPUT，需要用户补充"}]},
+    {"id":"q02","role":1,"question":"活动草稿信息齐全并通过校验后是什么状态？","expected":"ANSWER","expectedAnswer":"READY。","evidence":[{"document":"draft","quote":"草稿状态为READY"}]},
+    {"id":"q03","role":1,"question":"发布活动前需要用户确认什么？","expected":"ANSWER","expectedAnswer":"明确确认发布，并核对当前费用与草稿版本。","evidence":[{"document":"confirm","quote":"发布活动前须由用户明确确认，并核对当前发布费用和草稿版本"}]},
+    {"id":"q04","role":1,"question":"重复确认发布会使用什么结算编号？","expected":"ANSWER","expectedAnswer":"复用原结算编号。","evidence":[{"document":"confirm","quote":"重复确认复用原结算编号"}]},
+    {"id":"q05","role":3,"question":"管理员每批可选择多少个待审核活动预筛？","expected":"ANSWER","expectedAnswer":"一至五个。","evidence":[{"document":"review","quote":"管理员每批可以选择一至五个待审核活动进行风险预筛"}]},
+    {"id":"q06","role":3,"question":"活动内容变化后旧预筛结果还能用于审批吗？","expected":"ANSWER","expectedAnswer":"不能，需要重新预筛。","evidence":[{"document":"review","quote":"活动内容变化后旧预筛结果不能用于审批，需要重新预筛"}]},
+    {"id":"q07","role":3,"question":"运营问答的查询日期范围是多少天？","expected":"ANSWER","expectedAnswer":"一至三十一天。","evidence":[{"document":"analytics","quote":"查询范围为一至三十一天"}]},
+    {"id":"q08","role":3,"question":"时间币每日流转趋势是否包含MINT铸币？","expected":"ANSWER","expectedAnswer":"不包含，仅统计已入账TRANSFER。","evidence":[{"document":"analytics","quote":"排除MINT铸币"}]},
+    {"id":"q09","role":2,"question":"禁用知识文档时如何处理检索分块和版本？","expected":"ANSWER","expectedAnswer":"删除分块并增加版本。","evidence":[{"document":"disable","quote":"禁用知识文档时会删除其检索分块并增加知识库版本"}]},
+    {"id":"q10","role":1,"question":"生成问答期间知识库版本变化，旧答案怎么办？","expected":"ANSWER","expectedAnswer":"旧答案被拒绝，用户重新提问。","evidence":[{"document":"disable","quote":"该次旧答案会被拒绝，用户需要重新提问"}]},
+    {"id":"q11","role":2,"question":"知识问答的模型引用允许多长的引文？","expected":"ANSWER","expectedAnswer":"十二至五百字的原文连续片段。","evidence":[{"document":"citation","quote":"每段引文为十二至五百字的原文连续片段"}]},
+    {"id":"q12","role":1,"question":"没有足够检索依据时知识问答返回什么状态？","expected":"ANSWER","expectedAnswer":"NO_EVIDENCE。","evidence":[{"document":"citation","quote":"没有足够检索依据时返回NO_EVIDENCE"}]},
+    {"id":"q13","role":2,"question":"local-hash模式是真实语义Embedding吗？","expected":"ANSWER","expectedAnswer":"不是，只验证离线词面相似度。","evidence":[{"document":"embedding","quote":"local-hash模式只用于离线词面相似度验证，不是真实语义Embedding"}]},
+    {"id":"q14","role":2,"question":"remote模式的Embedding请求失败会静默降级吗？","expected":"ANSWER","expectedAnswer":"不会，失败会报错。","evidence":[{"document":"embedding","quote":"远端请求失败会报错，不会静默降级为离线模式"}]},
+    {"id":"q15","role":1,"question":"知识检索时老人能看到志愿者专属资料吗？","expected":"ANSWER","expectedAnswer":"不能，只能看公共和自身角色专属资料。","evidence":[{"document":"index","quote":"老人和志愿者只能检索自身角色的专属资料"}]},
+    {"id":"q16","role":3,"question":"知识检索使用什么状态的文档？","expected":"ANSWER","expectedAnswer":"READY且Embedding配置一致。","evidence":[{"document":"index","quote":"检索仅使用状态为READY且Embedding配置一致的文档"}]},
+    {"id":"q17","role":2,"question":"活动草稿缺少地址和电话时是什么状态？","expected":"NO_EVIDENCE","expectedAnswer":"草稿资料仅老人可见，当前受众资料不足。","evidence":[]},
+    {"id":"q18","role":2,"question":"重复确认发布会使用什么结算编号？","expected":"NO_EVIDENCE","expectedAnswer":"发布确认资料仅老人可见，当前受众资料不足。","evidence":[]},
+    {"id":"q19","role":1,"question":"管理员每批可选择多少个待审核活动预筛？","expected":"NO_EVIDENCE","expectedAnswer":"预筛资料仅管理员可见，当前受众资料不足。","evidence":[]},
+    {"id":"q20","role":2,"question":"运营问答的查询日期范围是多少天？","expected":"NO_EVIDENCE","expectedAnswer":"运营统计资料仅管理员可见，当前受众资料不足。","evidence":[]},
+    {"id":"q21","role":1,"question":"发布活动费固定为多少时间币？","expected":"NO_EVIDENCE","expectedAnswer":"资料未给出固定发布费数值。","evidence":[]},
+    {"id":"q22","role":3,"question":"系统昨天一共新增多少志愿者？","expected":"NO_EVIDENCE","expectedAnswer":"资料未提供昨日新增人数。","evidence":[]},
+    {"id":"q23","role":2,"question":"火星的公转周期是多少天？","expected":"NO_EVIDENCE","expectedAnswer":"知识库没有天文学资料。","evidence":[]},
+    {"id":"q24","role":1,"question":"番茄炒蛋应该放多少克盐？","expected":"NO_EVIDENCE","expectedAnswer":"知识库没有烹饪资料。","evidence":[]}
+  ]
+}

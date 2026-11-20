@@ -27,6 +27,7 @@ class AgentProtocolTests {
             Map<String,Object> message=new LinkedHashMap<>();message.put("role","assistant");message.put("content",null);
             message.put("tool_calls",List.of(Map.of("id","call_"+round,"type","function","function",Map.of("name",name,"arguments",json.writeValueAsString(args)))));
             byte[] response=json.writeValueAsBytes(Map.of("id","response_"+round,"object","chat.completion","model","protocol-test",
+                    "usage",Map.of("prompt_tokens",100*round,"completion_tokens",10,"total_tokens",100*round+10),
                     "choices",List.of(Map.of("index",0,"finish_reason","tool_calls","message",message))));
             exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,response.length);
             try(var out=exchange.getResponseBody()){out.write(response);}
@@ -38,7 +39,11 @@ class AgentProtocolTests {
             ReflectionTestUtils.setField(source,"apiKey","local-protocol-test-key");
             ReflectionTestUtils.setField(source,"model","protocol-test");
             ReflectionTestUtils.setField(source,"apiUrl","http://127.0.0.1:"+server.getAddress().getPort()+"/custom/chat");
-            var runtime=new AgentRuntime(source,json,mock(JdbcTemplate.class));AtomicInteger quota=new AtomicInteger();
+            JdbcTemplate jdbc=mock(JdbcTemplate.class);
+            var audit=new CopyOnWriteArrayList<JsonNode>();
+            doAnswer(invocation->{audit.add(json.readTree((String)invocation.getArgument(5)));return 1;})
+                    .when(jdbc).update(anyString(),any(),any(),any(),any(),any());
+            var runtime=new AgentRuntime(source,json,jdbc);AtomicInteger quota=new AtomicInteger();
             JsonNode result=runtime.run(7,UUID.randomUUID().toString(),"校验并完成","需要两个名额",List.of(
                     new AgentToolSpec("validate","检查名额",AgentToolSpec.object(Map.of("quota",Map.of("type","integer")),"quota"),false,args->{
                         int value=args.path("quota").intValue();if(value<1)throw new IllegalArgumentException("quota必须为正整数");quota.set(value);return Map.of("quota",value);
@@ -52,6 +57,9 @@ class AgentProtocolTests {
             assertFalse(schema.contains("actor"));assertFalse(schema.contains("pay"));
             assertFalse(requests.get(0).path("messages").toString().contains("local-protocol-test-key"));
             assertFalse(requests.get(0).path("stream").asBoolean());
+            JsonNode summary=audit.stream().filter(e->e.has("usageComplete")).findFirst().orElseThrow();
+            assertEquals(600,summary.path("inputTokens").asLong());assertEquals(30,summary.path("outputTokens").asLong());
+            assertTrue(summary.path("usageComplete").asBoolean());assertEquals(1,summary.path("toolFailures").asInt());
         } finally {server.stop(0);}
     }
 }

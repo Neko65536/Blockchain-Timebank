@@ -53,6 +53,11 @@ class AgentRuntimeTests {
         assertEquals(2,rounds.get());assertEquals(1,reads.get());
         String audit=jdbc.queryForList("select * from agent_audit where task_id=?",id).toString();
         assertTrue(audit.contains("REACT_COMPLETE"));assertFalse(audit.contains("private-business-data"));assertFalse(audit.contains("private-question"));
+        var summary=event("REACT_COMPLETE");
+        assertEquals(id,summary.path("traceId").asText());
+        assertEquals(2,summary.path("toolCalls").asInt());assertEquals(0,summary.path("toolFailures").asInt());
+        assertEquals(2,summary.path("usageMissingCalls").asInt());assertFalse(summary.path("usageComplete").asBoolean());
+        assertEquals(2,events("MODEL_CALL").size());assertEquals(2,events("TOOL_CALL").size());
     }
     @Test void forgedIdentityAndUnregisteredPaymentNeverReachBusinessTool(){
         AtomicInteger reads=new AtomicInteger(),rounds=new AtomicInteger();
@@ -61,6 +66,7 @@ class AgentRuntimeTests {
         }});
         assertThrows(Exception.class,()->runtime.run(1,UUID.randomUUID().toString(),"流程","转账",tools("one",reads)));
         assertEquals(0,reads.get());assertTrue(rounds.get()<=6);
+        assertTrue(events("TOOL_CALL").stream().anyMatch(e->e.path("tool").asText().equals("UNREGISTERED") && e.path("status").asText().equals("FAILED")));
         assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit where tool='REACT_COMPLETE'",Integer.class));
     }
     @Test void repeatedReadCannotExhaustUnboundedModelOrToolBudget(){
@@ -78,12 +84,15 @@ class AgentRuntimeTests {
                 new AgentToolSpec("read","读取",AgentToolSpec.object(Map.of()),false,args->{throw new IllegalStateException("private-database-detail");}))));
         assertEquals(1,rounds.get());
         assertFalse(jdbc.queryForList("select detail from agent_audit").toString().contains("private-database-detail"));
+        assertEquals("FAILED",event("TOOL_CALL").path("status").asText());
     }
     @Test void timeoutCancelsModelSubscriptionAndProducesNoCompletion(){
         ReflectionTestUtils.setField(runtime,"timeoutSeconds",1);AtomicBoolean cancelled=new AtomicBoolean();
         when(source.reactModel()).thenReturn(new TestModel(){public Flux<ChatResponse> stream(List<Msg> m,List<ToolSchema> t,GenerateOptions o){return Flux.<ChatResponse>never().doOnCancel(()->cancelled.set(true));}});
         var error=assertThrows(ResponseStatusException.class,()->runtime.run(1,UUID.randomUUID().toString(),"流程","等待",tools("one",new AtomicInteger())));
         assertEquals(504,error.getStatusCode().value());assertTrue(cancelled.get());
+        assertEquals("CANCELLED",event("MODEL_CALL").path("status").asText());
+        assertEquals(1,event("REACT_FAILED").path("usageMissingCalls").asInt());
         assertEquals(0,jdbc.queryForObject("select count(*) from agent_audit where tool='REACT_COMPLETE'",Integer.class));
     }
     @Test void requestInterruptionCancelsTheActiveModel() throws Exception {
@@ -104,5 +113,43 @@ class AgentRuntimeTests {
             assertEquals("A",a.get(5,TimeUnit.SECONDS));assertEquals("B",b.get(5,TimeUnit.SECONDS));
         }
         assertEquals(2,jdbc.queryForObject("select count(distinct actor_id) from agent_audit where tool='REACT_COMPLETE'",Integer.class));
+        assertEquals(2,events("REACT_COMPLETE").stream().map(e->e.path("traceId").asText()).distinct().count());
+    }
+    List<tools.jackson.databind.JsonNode> events(String name){
+        return jdbc.queryForList("select detail from agent_audit where tool=?",String.class,name).stream().map(json::readTree).toList();
+    }
+    tools.jackson.databind.JsonNode event(String name){var events=events(name);assertEquals(1,events.size());return events.get(0);}
+
+    @Test void cumulativeUsageIsCountedOncePerModelCallAndSynchronousFailureIsMeasured(){
+        String id=UUID.randomUUID().toString();var telemetry=new AgentTelemetry(id,1,jdbc,json,List.of());
+        telemetry.observeModel("test",()->Flux.just(
+                ChatResponse.builder().usage(new ChatUsage(10,2,0)).build(),
+                ChatResponse.builder().usage(new ChatUsage(10,5,0)).build())).blockLast();
+        telemetry.observeModel("test",()->Flux.just(ChatResponse.builder().usage(new ChatUsage(20,3,0)).build())).blockLast();
+        assertThrows(IllegalStateException.class,()->telemetry.observeModel("test",()->{throw new IllegalStateException("private-provider-error");}).blockLast());
+        telemetry.finish(false);
+        var summary=event("REACT_FAILED");assertEquals(30,summary.path("inputTokens").asLong());
+        assertEquals(8,summary.path("outputTokens").asLong());assertEquals(38,summary.path("totalTokens").asLong());
+        assertEquals(3,summary.path("modelCalls").asInt());assertEquals(2,summary.path("usageReportedCalls").asInt());
+        assertEquals(1,summary.path("usageMissingCalls").asInt());assertFalse(summary.path("usageComplete").asBoolean());
+        assertEquals(3,events("MODEL_CALL").size());
+        assertTrue(events("MODEL_CALL").stream().allMatch(e->e.path("durationMs").asLong()>=0));
+        assertFalse(jdbc.queryForList("select detail from agent_audit").toString().contains("private-provider-error"));
+    }
+
+    @Test void deniedInterruptedAndUnfinishedToolsAreNotSuccessful(){
+        var telemetry=new AgentTelemetry(UUID.randomUUID().toString(),1,jdbc,json,tools("value",new AtomicInteger()));
+        var toolkit=new io.agentscope.core.tool.Toolkit();
+        var hookAgent=mock(io.agentscope.core.agent.Agent.class);
+        for(var state:List.of(ToolResultState.DENIED,ToolResultState.INTERRUPTED,ToolResultState.RUNNING)){
+            var use=new ToolUseBlock(UUID.randomUUID().toString(),"read",Map.of());
+            telemetry.onEvent(new io.agentscope.core.hook.PreActingEvent(hookAgent,toolkit,use)).block();
+            if(state!=ToolResultState.RUNNING)
+                telemetry.onEvent(new io.agentscope.core.hook.PostActingEvent(hookAgent,toolkit,use,ToolResultBlock.text("private").withState(state))).block();
+        }
+        telemetry.finish(false);
+        assertEquals(3,event("REACT_FAILED").path("toolFailures").asInt());
+        assertEquals(2,events("TOOL_CALL").stream().filter(e->"CANCELLED".equals(e.path("status").asText())).count());
+        assertEquals(1,events("TOOL_CALL").stream().filter(e->"FAILED".equals(e.path("status").asText())).count());
     }
 }

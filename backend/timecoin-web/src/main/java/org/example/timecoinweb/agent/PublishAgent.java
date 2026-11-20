@@ -69,6 +69,7 @@ public class PublishAgent {
         if(rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"任务不存在");
         var row=rows.get(0);
         Map<String,Object> view=new LinkedHashMap<>();
+        view.put("traceId",id);
         for(String field:List.of("id","state","revision")) view.put(field,row.get(field));
         view.put("draft",read((String)row.get("draft")));view.put("feedback",read((String)row.get("feedback")));
         view.put("publishFee",fee());

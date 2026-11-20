@@ -1,5 +1,37 @@
 # 基于区块链的时间币服务系统
 
+## Agent可观测性与RAG评测补强（2026-11-20）
+
+后续交付约定：每完成一大项改动，集中验证测试并更新现有文档，然后提交开发分支、推送到目标仓库并合并至main；若远端main有新提交，先整合并验证后再合并。
+
+**Agent可观测性已实现。** 复用`agent_audit`，无需新增表或迁移。每次ReAct的`runId`同时作为`traceId`，发布草稿、审核批次结果、运营问答均返回该字段；并发调用不共享计量状态。`MODEL_CALL`记录模型名、轮次、耗时、SUCCESS/FAILED/CANCELLED及供应商返回的输入/输出token；同一轮取最后一个非空累计usage快照，不重复累加流式快照。供应商不提供usage时明确标记`usageReported=false`，汇总包含`usageReportedCalls/usageMissingCalls/usageComplete`，token汇总只覆盖已返回用量的调用，不代表完整账单或人民币成本。
+
+`TOOL_CALL`通过AgentScope前后Hook记录全部工具尝试的耗时与成功/失败/取消，包括schema校验失败和未注册工具；未注册名称只记为UNREGISTERED。`REACT_COMPLETE/REACT_FAILED`汇总总耗时、模型耗时、模型/工具调用数和失败数；日志使用`agent_event`与JSON字段`traceId`关联。新增遥测审计和结构化日志不记录原始问题、提示词、思维过程、工具原文、密钥或异常消息。可用参数化SQL`select tool,detail,created_at from agent_audit where task_id=? order by created_at,id`查询一次流程；这是应用级追踪，未声称已接入OpenTelemetry或提供跨服务瀑布图。业务前置校验尚未进入ReAct的请求不计入此口径。
+
+首轮集中验证：`AgentRuntimeTests,AgentProtocolTests,PublishAgentTests,AgentModelTests`共15项通过，日志`backend/timecoin-web/target/agent-observability-tests.log`。覆盖本地真实OpenAI协议usage解析、多轮累加、缺失用量、同步异常、超时取消、并发隔离、未知工具失败和隐私约束；最终回归另补SDK拒绝、中断及未结束工具不会被误记成功的用例，未使用付费模型作为回归依赖。
+
+**RAG最小评测集已实现。** `backend/timecoin-web/src/test/resources/rag/evaluation-v1.json`包含8份按源码整理的知识资料和24条初版标注（尚待人工复核）：16条可回答、8条无依据（含角色隔离、缺少数值与领域外问题）。每题保留角色、参考答案、预期文档及关键原文；相同问题在不同角色下有不同标注。资料只进入测试H2内存库，不写入运行中的知识库。实际执行入库、Embedding、权限筛选、检索与回答，不mock命中结果。报告保存数据集SHA256、配置、逐题回答/引用/耗时及失败项，默认固定512维local-hash、topK=5、minimum-score=0.2、关闭缓存。
+
+| 指标 | 分子/分母 | 本次离线基线 |
+|---|---|---|
+| 引用命中率 | 引用来自标注文档、确为原文且包含标注关键片段的可回答题/全部可回答题 | 14/16，87.50% |
+| NO_EVIDENCE召回率 | 正确返回NO_EVIDENCE且无引用的无依据题/全部无依据题 | 8/8，100% |
+| NO_EVIDENCE精确率 | 正确无依据拒答/全部NO_EVIDENCE回答 | 8/9，88.89% |
+| 错误拒答率 | 可回答却返回NO_EVIDENCE的题/全部可回答题 | 1/16，6.25% |
+| 证据决策正确率 | 正例引用命中数＋负例正确拒答数/全部题 | 22/24，91.67% |
+
+空分母报告null；请求异常单独计数，不能当作正确拒答。`q07`“运营问答的查询日期范围”被误拒答，`q16`“知识检索使用什么状态的文档”引用错文档，保留原题作为改进依据，未按成绩调整检索阈值。以上只是local-hash＋extractive的小样本基线，**不是DeepSeek生成质量、真实语义检索准确率或独立用户测试结果**；引用命中也不等同于答案语义正确。初版测试校验标注完整性、指标口径和零请求错误，不设置未经评审的质量达标线。
+
+使用JDK21，从仓库根目录复现：
+
+```powershell
+mvn -f backend/pom.xml '-Dtest=RagTests,RagEvaluationTests' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+集中验证15项通过，日志`backend/timecoin-web/target/rag-evaluation-tests.log`，逐题报告`backend/timecoin-web/target/rag-evaluation-local-hash-extractive.json`。需要评测真实模型时，显式追加`'-Drag.eval.answer-mode=model'`并设置`AI_CHAT_API_KEY/AI_CHAT_BASE_URL/AI_CHAT_MODEL`；需要真实向量模型时，再追加`'-Drag.eval.embedding-mode=remote'`并设置现有`AI_RAG_EMBEDDING_URL/KEY/MODEL/DIMENSIONS`。两者独立配置；已配置聊天模型不代表已有Embedding服务。报告文件名包含两种模式，真实模型请求会产生供应商用量，普通回归不访问供应商。
+
+最终`mvn -f backend/pom.xml package`成功：125项中105通过、20项依赖外部环境的集成测试按条件跳过，0失败、0错误；日志`backend/timecoin-web/target/p0-ai-final-tests.log`。后端jar已更新，前后端服务保持停止。本轮未重新验证真实MySQL/Redis/MQ/区块链或真实供应商质量，未将历史外部集成结果当成本轮结果。
+
 ## JDK21、SpringBoot4与ReAct升级（2026-11-19）
 
 当前开发分支`codex/boot4-agentscope`，当前使用JDK21、SpringBoot4.0.9、MyBatis启动器4.0.0、ShardingSphere-JDBC5.5.2和AgentScope Java2.0.5。以下升级记录覆盖后文旧版本说明，历史测试数据保留原环境，不能当作升级后的性能结果。

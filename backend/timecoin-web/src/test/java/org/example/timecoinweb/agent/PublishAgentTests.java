@@ -28,6 +28,7 @@ class PublishAgentTests {
     }
     @Test void repeatCreationReusesTaskAndNeverPublishes() throws Exception {
         var first=agent.create(1,"request-001","买菜");
+        assertEquals(first.get("id"),first.get("traceId"));
         assertEquals(first.get("id"),agent.create(1,"request-001","买菜").get("id"));
         assertEquals("NEEDS_INPUT",first.get("state"));
         assertThrows(Exception.class,()->agent.create(1,"request-001","其他需求"));

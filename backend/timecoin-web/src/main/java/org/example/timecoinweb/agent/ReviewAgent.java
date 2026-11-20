@@ -30,7 +30,7 @@ public class ReviewAgent {
 
     public void requireAdmin(int actor){if(!Integer.valueOf(3).equals(jdbc.queryForObject("select role from `user` where id=?",Integer.class,actor)))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"需要管理员身份");}
     public List<Map<String,Object>> candidates(int actor){requireAdmin(actor);return jdbc.queryForList("select id,title,address,date from activity where status=1 order by update_time desc,id desc limit 50");}
-    public List<Map<String,Object>> list(int actor){requireAdmin(actor);return jdbc.queryForList("select * from agent_review order by created_at desc,id desc limit 100");}
+    public List<Map<String,Object>> list(int actor){requireAdmin(actor);return traced(jdbc.queryForList("select * from agent_review order by created_at desc,id desc limit 100"));}
     public List<Map<String,Object>> screen(int actor,String key,List<Integer> requested) throws Exception {
         requireAdmin(actor);
         if(key==null || !key.matches("[a-zA-Z0-9:_-]{8,100}"))throw new IllegalArgumentException("缺少有效幂等键");
@@ -76,7 +76,7 @@ public class ReviewAgent {
                 jdbc.update("insert into agent_review(id,batch_id,activity_id,snapshot_hash,snapshot,risk,findings,state) values(?,?,?,?,?,?,?,?)",review,batch,id,Hash.sha3String(snapshot),snapshot,risk,audit.encode(Map.of("tags",tags,"reason",prediction.path("reason").asText())),"AWAITING_HUMAN");
                 audit.audit(review,actor,"SCREEN_ACTIVITY","风险="+risk+"；仅预筛，不改变活动状态");
             }
-            return jdbc.queryForList("select * from agent_review where batch_id=?",batch);
+            return traced(jdbc.queryForList("select * from agent_review where batch_id=?",batch));
         });
     }
     public Object decide(int actor,String id,String decision,String note,boolean confirmed){
@@ -130,6 +130,9 @@ public class ReviewAgent {
         var rows=jdbc.queryForList("select id,input_hash from agent_review_batch where actor_id=? and request_key=?",actor,key);
         if(rows.isEmpty())return null;
         if(!hash.equals(rows.get(0).get("input_hash")))throw new ResponseStatusException(HttpStatus.CONFLICT,"幂等键参数冲突");
-        return jdbc.queryForList("select * from agent_review where batch_id=?",rows.get(0).get("id"));
+        return traced(jdbc.queryForList("select * from agent_review where batch_id=?",rows.get(0).get("id")));
+    }
+    private List<Map<String,Object>> traced(List<Map<String,Object>> rows){
+        rows.forEach(row->row.put("traceId",row.get("batch_id")));return rows;
     }
 }

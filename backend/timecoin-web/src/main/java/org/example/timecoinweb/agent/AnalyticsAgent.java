@@ -76,7 +76,7 @@ public class AnalyticsAgent {
             conclusion="该范围已入账转账记录金额合计"+total.toPlainString()+"时间币。";
         }
         Map<String,Object> response=new LinkedHashMap<>();
-        response.put("auditId",id);response.put("tool",tool);response.put("start",start.toString());response.put("end",end.toString());response.put("timezone",ZONE.toString());
+        response.put("auditId",id);response.put("traceId",id);response.put("tool",tool);response.put("start",start.toString());response.put("end",end.toString());response.put("timezone",ZONE.toString());
         response.put("chartType","activity_registration_top".equals(tool)?"bar":"line");response.put("rows",rows);response.put("scope",scope);response.put("answer",conclusion);
         // 数值结论由工具结果构造，不让生成模型编造趋势或原因；记录问题摘要而非原始问题。
         return response;
