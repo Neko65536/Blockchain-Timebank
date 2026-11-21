@@ -121,7 +121,7 @@ public class ChainController {
             }
             BigInteger amount = new BigInteger(body.getAmount().trim());
             int owner = (Integer) org.example.utils.JwtUtils.parseJWT(token).get("id");
-            return Result.success(settlements.submitTransfer(owner, requestId, "ADMIN_MINT", null, body.getUserId(), amount));
+            return Result.success(settlements.submitTransfer(owner, requestId, "ADMIN_MINT", null, body.getUserId(), amount,body.isLifetimeReview()));
         } catch (Exception e) {
             log.warn("mint failed", e);
             return Result.error(e.getMessage());
@@ -172,6 +172,7 @@ public class ChainController {
 
     @Data
     public static class MintBody {
+        private boolean lifetimeReview;
         private String userId;
         /** 十进制整数字符串，如 "100" */
         private String amount;

@@ -52,7 +52,7 @@ class TimecoinWebApplicationTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @Autowired BlockchainProperties blockchain;
-    @Autowired TimeCoinChainService chain;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean TimeCoinChainService chain;
     @Autowired ChainTransactionService submissions;
     @Autowired org.example.timecoinweb.config.ShardRouting routing;
     @Autowired org.example.timecoinweb.service.SettlementService settlements;
@@ -70,6 +70,7 @@ class TimecoinWebApplicationTests {
 
     @BeforeEach
     void fixtures() {
+        jdbc.update("delete from mint_quota_admission");
         jdbc.update("delete from agent_audit");
         jdbc.update("delete from agent_task");
         jdbc.update("delete from agent_review");
@@ -772,6 +773,8 @@ class TimecoinWebApplicationTests {
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private void mockChain(AtomicBoolean mined, boolean reverted) throws Exception {
+        IssuanceTestSupport.configure(blockchain);
+        doAnswer(call->IssuanceTestSupport.view(call.getArgument(0),blockchain)).when(chain).callView(any());
         blockchain.setEnabled(true);
         blockchain.setContractAddress("0x0000000000000000000000000000000000000001");
         blockchain.setReceiptAttempts(2);

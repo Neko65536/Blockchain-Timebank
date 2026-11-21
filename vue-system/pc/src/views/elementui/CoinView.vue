@@ -140,6 +140,10 @@
         <el-form-item label="备注">
           <el-input v-model="mintRemark" type="textarea" :rows="2" placeholder="仅本地说明，不上链" />
         </el-form-item>
+        <el-form-item label="累计额度复核">
+          <el-checkbox v-model="mintLifetimeReview">申请超累计阈值多签复核</el-checkbox>
+          <p>仅在累计额度触发复核时勾选；审批不能豁免总量和每日上限。1币=1分钟。</p>
+        </el-form-item>
       </el-form>
       <span slot="footer">
         <el-button @click="mintDialogVisible = false">取 消</el-button>
@@ -197,6 +201,7 @@ export default {
       mintDialogVisible: false,
       mintTarget: null,
       mintAmount: 1,
+      mintLifetimeReview: false,
       mintRemark: '',
       mintSubmitting: false,
       transferDialogVisible: false,
@@ -391,6 +396,7 @@ export default {
       }
       this.mintTarget = row;
       this.mintAmount = 1;
+      this.mintLifetimeReview = false;
       this.mintRemark = '';
       this.mintDialogVisible = true;
     },
@@ -405,6 +411,7 @@ export default {
       postSettlement('/administrator/chain/mint', {
           userId: String(this.mintTarget.chainUserId || this.mintTarget.id),
           amount: String(Math.floor(amt)),
+          lifetimeReview: this.mintLifetimeReview,
         })
         .then((res) => {
           if (res.code === 1) {

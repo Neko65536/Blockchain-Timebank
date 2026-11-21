@@ -49,7 +49,7 @@ class FiscoIntegrationTests {
             var operator=new CryptoSuite(0).getCryptoKeyPair();
             Credentials a=Credentials.create(Keys.createEcKeyPair()),b=Credentials.create(Keys.createEcKeyPair());
             String binary=json.readTree(Files.readString(Path.of("../../TimeCoinSystem/artifacts/contracts/GovernedTimeCoin.sol/GovernedTimeCoin.json"))).path("bytecode").asText();
-            String constructor=FunctionEncoder.encodeConstructor(List.of(new Address(operator.getAddress()),new Bytes32(Numeric.hexStringToByteArray(Hash.sha3String("integration:"+UUID.randomUUID()))),new DynamicArray<>(Address.class,List.of(new Address(a.getAddress()),new Address(b.getAddress()))),new Uint256(2)));
+            String constructor=FunctionEncoder.encodeConstructor(List.of(new Address(operator.getAddress()),new Bytes32(Numeric.hexStringToByteArray(Hash.sha3String("integration:"+UUID.randomUUID()))),new DynamicArray<>(Address.class,List.of(new Address(a.getAddress()),new Address(b.getAddress()))),new Uint256(2),new StaticArray5<>(Uint256.class,List.of(new Uint256(20000000),new Uint256(100000),new Uint256(100000),new Uint256(1440),new Uint256(1000)))));
             var deployment=TransactionBuilderJniObj.createSignedTransaction(operator.getJniKeyPair(),client.getGroup(),client.getChainId(),"",Numeric.cleanHexPrefix(binary)+constructor,"",client.getBlockLimit().longValueExact(),0);
             var receipt=client.sendTransaction(deployment.getSignedTx(),false).getTransactionReceipt();
             assertNotNull(receipt);assertEquals(0,receipt.getStatus());
@@ -70,7 +70,8 @@ class FiscoIntegrationTests {
                 assertEquals(3,client.getSealerList().getSealerList().size());
                 assertEquals(1,client.getObserverList().getObserverList().size());
             }
-            long deadline=System.currentTimeMillis()+600000;
+            long day=java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).toEpochDay();
+            long deadline=Math.min(System.currentTimeMillis()+600000,((day+1)*86400-28801)*1000);
             List<Type> proposal=new ArrayList<>(List.of(new Bytes32(Numeric.hexStringToByteArray(Hash.sha3String("mint-fixture"))),new Uint8(1),new Utf8String("1"),new Uint256(100),new Uint256(deadline)));
             Function digestFunction=new Function("proposalDigest",proposal,List.of(new TypeReference<Bytes32>(){}));
             var call=client.call(new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(operator.getAddress(),contract,Numeric.hexStringToByteArray(FunctionEncoder.encode(digestFunction)))).getCallResult();
@@ -120,6 +121,15 @@ class FiscoIntegrationTests {
             Function balance=new Function("balanceOf",List.of(new Utf8String("2")),List.of(new TypeReference<Uint256>(){}));
             var output=client.call(new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(operator.getAddress(),contract,Numeric.hexStringToByteArray(FunctionEncoder.encode(balance)))).getCallResult();
             assertEquals(BigInteger.valueOf(9),FunctionReturnDecoder.decode(output.getOutput(),balance.getOutputParameters()).get(0).getValue());
+            for(Function counter:List.of(
+                    new Function("totalSupply",List.of(),List.of(new TypeReference<Uint256>(){})),
+                    new Function("lifetimeMinted",List.of(new Utf8String("1")),List.of(new TypeReference<Uint256>(){})),
+                    new Function("globalDailyMinted",List.of(new Uint256(day)),List.of(new TypeReference<Uint256>(){})),
+                    new Function("accountDailyMinted",List.of(new Utf8String("1"),new Uint256(day)),List.of(new TypeReference<Uint256>(){})))) {
+                var actual=client.call(new org.fisco.bcos.sdk.v3.client.protocol.request.Transaction(operator.getAddress(),contract,Numeric.hexStringToByteArray(FunctionEncoder.encode(counter)))).getCallResult();
+                assertEquals(0,actual.getStatus());
+                assertEquals(BigInteger.valueOf(100),FunctionReturnDecoder.decode(actual.getOutput(),counter.getOutputParameters()).get(0).getValue());
+            }
             System.out.println("FISCO_EVIDENCE chain="+client.getChainId()+" group="+client.getGroup()+" contract="+contract+" mint="+mintHash+" transfer="+hash+" submissions=2 receiverBalance=9 separateSigner=true");
         } finally {if(process!=null){process.destroy();if(!process.waitFor(5,java.util.concurrent.TimeUnit.SECONDS))process.destroyForcibly();}sdk.stopAll();}
     }

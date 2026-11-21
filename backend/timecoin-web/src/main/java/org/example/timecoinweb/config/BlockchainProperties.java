@@ -24,6 +24,25 @@ public class BlockchainProperties {
     private String signerUrl = "http://127.0.0.1:8443/v1/sign";
     private String signerToken = "";
     private boolean governanceEnabled = false;
+    /** 部署必填，累计额度是显式人工复核阈值；其余为硬上限。 */
+    private BigInteger maxSupply;
+    private BigInteger lifetimeMintThreshold;
+    private BigInteger globalDailyMintLimit;
+    private BigInteger accountDailyMintLimit;
+
+    @jakarta.annotation.PostConstruct
+    public void validateIssuanceConfiguration() {
+        if(enabled) requireIssuanceLimits();
+    }
+
+    public void requireIssuanceLimits() {
+        BigInteger[] limits={maxSupply,lifetimeMintThreshold,globalDailyMintLimit,accountDailyMintLimit};
+        for(BigInteger limit:limits)if(limit==null || limit.signum()<=0 || limit.bitLength()>63)
+            throw new IllegalStateException("四个发行额度必须显式配置为台账范围内的正整数");
+        if(lifetimeMintThreshold.compareTo(maxSupply)>0 || globalDailyMintLimit.compareTo(maxSupply)>0
+                || accountDailyMintLimit.compareTo(globalDailyMintLimit)>0)
+            throw new IllegalStateException("发行额度关系不合法");
+    }
     private long proposalLifetimeSeconds = 86400;
 
     public boolean isFisco() { return "fisco".equals(backend); }

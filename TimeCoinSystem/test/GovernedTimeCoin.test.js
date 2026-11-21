@@ -3,11 +3,12 @@ const { ethers } = require('hardhat');
 const { time } = require('@nomicfoundation/hardhat-network-helpers');
 
 describe('GovernedTimeCoin', function () {
+  const limits=[20000000,100000,100000,1440,1];
   let coin, operator, a, b, c, outsider, deadline;
   beforeEach(async function () {
     [operator,a,b,c,outsider] = await ethers.getSigners();
-    coin = await (await ethers.getContractFactory('GovernedTimeCoin')).deploy(operator.address,ethers.id('test-chain:group0'),[a.address,b.address,c.address],2);
-    deadline = (await time.latest()) + 3600;
+    coin = await (await ethers.getContractFactory('GovernedTimeCoin')).deploy(operator.address,ethers.id('test-chain:group0'),[a.address,b.address,c.address],2,limits);
+    deadline = (Math.floor(((await time.latest())+28800)/86400)+1)*86400-28801;
   });
   async function signatures(id,action,user,value,signers=[a,b],target=coin) {
     const digest=await target.proposalDigest(id,action,user,value,deadline);
@@ -49,7 +50,7 @@ describe('GovernedTimeCoin', function () {
     const id=ethers.id('proposal'), signed=await signatures(id,1,'1',5);
     await coin.execute(id,1,'1',5,deadline,signed);
     await expect(coin.execute(id,1,'1',5,deadline,signed)).to.be.revertedWith('proposal used');
-    const other=await (await ethers.getContractFactory('GovernedTimeCoin')).deploy(operator.address,ethers.id('test-chain:group0'),[a.address,b.address,c.address],2);
+    const other=await (await ethers.getContractFactory('GovernedTimeCoin')).deploy(operator.address,ethers.id('test-chain:group0'),[a.address,b.address,c.address],2,limits);
     await expect(other.execute(id,1,'1',5,deadline,signed)).to.be.revertedWith('invalid approvals');
     await expect(execute('zero',1,'1',0)).to.be.revertedWith('invalid action');
     await expect(execute('large',1,'1',2n**63n)).to.be.revertedWith('invalid action');
@@ -58,7 +59,7 @@ describe('GovernedTimeCoin', function () {
   });
   it('rejects duplicate and operator approvers at deployment', async function () {
     const factory=await ethers.getContractFactory('GovernedTimeCoin');
-    await expect(factory.deploy(operator.address,ethers.id('domain'),[a.address,a.address],2)).to.be.revertedWith('invalid approver');
-    await expect(factory.deploy(operator.address,ethers.id('domain'),[a.address,operator.address],2)).to.be.revertedWith('invalid approver');
+    await expect(factory.deploy(operator.address,ethers.id('domain'),[a.address,a.address],2,limits)).to.be.revertedWith('invalid approver');
+    await expect(factory.deploy(operator.address,ethers.id('domain'),[a.address,operator.address],2,limits)).to.be.revertedWith('invalid approver');
   });
 });

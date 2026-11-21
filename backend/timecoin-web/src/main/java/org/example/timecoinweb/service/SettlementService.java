@@ -31,6 +31,7 @@ public class SettlementService {
     private final BlockchainProperties blockchain;
     private final ObjectMapper json;
     private final org.example.timecoinweb.config.ShardRouting routing;
+    private final MintQuotaService mintQuota;
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.beans.factory.ObjectProvider<GovernanceService> governance;
     @Value("${settlement.max-attempts:8}") private int maxAttempts;
@@ -39,21 +40,26 @@ public class SettlementService {
 
     public SettlementService(JdbcTemplate jdbc, PlatformTransactionManager manager, TimeCoinChainService chain,
                              CoinBalanceLedgerService ledger, ActivityMapper activities, VolMapper volunteers,
-                             BlockchainProperties blockchain, ObjectMapper json, org.example.timecoinweb.config.ShardRouting routing) {
+                             BlockchainProperties blockchain, ObjectMapper json, org.example.timecoinweb.config.ShardRouting routing, MintQuotaService mintQuota) {
         this.jdbc = jdbc; this.transaction = new TransactionTemplate(manager); this.chain = chain;
         this.ledger = ledger; this.activities = activities; this.volunteers = volunteers;
         this.blockchain = blockchain; this.json = json;
         this.routing = routing;
+        this.mintQuota = mintQuota;
     }
 
     public Map<String, Object> submitTransfer(int owner, String requestId, String type, String from, String to, BigInteger amount) {
+        return submitTransfer(owner,requestId,type,from,to,amount,false);
+    }
+    public Map<String, Object> submitTransfer(int owner, String requestId, String type, String from, String to, BigInteger amount, boolean lifetimeReview) {
         if (!List.of("USER_TRANSFER", "ADMIN_TRANSFER", "ADMIN_MINT").contains(type)) throw new IllegalArgumentException("未知结算类型");
+        if(lifetimeReview && !"ADMIN_MINT".equals(type))throw new IllegalArgumentException("仅铸币允许申请累计阈值复核");
         requireAmount(amount);
         String target = requireAccount(to);
         String source = "ADMIN_MINT".equals(type) ? null : requireAccount(from);
         if (Objects.equals(source, target)) throw new IllegalArgumentException("不能转账给自己");
         if ("USER_TRANSFER".equals(type) && !String.valueOf(owner).equals(source)) throw new IllegalArgumentException("付款人不匹配");
-        String fingerprint = Hash.sha3String(type + ":" + source + ":" + target + ":" + amount);
+        String fingerprint = Hash.sha3String(type + ":" + source + ":" + target + ":" + amount+(lifetimeReview?":LIFETIME_REVIEW":""));
         return transaction.execute(tx -> {
             lockOwner(owner);
             Order previous = findRequest(requestKey(owner, type, requestId), fingerprint);
@@ -61,7 +67,7 @@ public class SettlementService {
             requireReady();
             requireExistingAccount(target);
             if (source != null) requireExistingAccount(source);
-            return view(insert(owner, requestKey(owner, type, requestId), fingerprint, type, source, target, amount, null, null));
+            return view(insert(owner, requestKey(owner, type, requestId), fingerprint, type, source, target, amount, null, null,lifetimeReview));
         });
     }
 
@@ -190,7 +196,11 @@ public class SettlementService {
     }
 
     private Order insert(int owner, String key, String payload, String type, String from, String to, BigInteger amount, Integer activity, Integer volunteer) {
+        return insert(owner,key,payload,type,from,to,amount,activity,volunteer,false);
+    }
+    private Order insert(int owner, String key, String payload, String type, String from, String to, BigInteger amount, Integer activity, Integer volunteer,boolean lifetimeReview) {
         String id = UUID.randomUUID().toString();
+        if("ADMIN_MINT".equals(type))mintQuota.reserve(id,to,amount,lifetimeReview);
         boolean multi=blockchain.isGovernanceEnabled() && "ADMIN_MINT".equals(type);
         String state = amount.signum() == 0 ? "SUCCEEDED" : multi ? "MULTISIG" : "PENDING";
         Timestamp created=routing.now();

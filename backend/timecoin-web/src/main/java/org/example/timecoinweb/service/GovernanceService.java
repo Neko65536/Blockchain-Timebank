@@ -33,7 +33,9 @@ public class GovernanceService {
 
     /** 调用方位于结算创建事务中；MULTISIG阶段不产生outbox。 */
     public void createMint(String settlement,int owner,String account,long amount) {
-        create(settlement,Hash.sha3String("mint:"+settlement),settlement,1,account,amount,owner);
+        var quota=jdbc.queryForMap("select * from mint_quota_admission where settlement_id=?",settlement);
+        int action=((Number)quota.get("lifetime_review")).intValue()==1?3:1;
+        create(settlement,Hash.sha3String("mint:"+settlement),settlement,action,account,amount,owner);
     }
 
     public Map<String,Object> proposeFreeze(int owner,String requestId,String account,boolean frozen) {
@@ -58,6 +60,11 @@ public class GovernanceService {
         enabled();long lifetime=properties.getProposalLifetimeSeconds();
         if(lifetime<60 || lifetime>604800) throw new IllegalStateException("提案有效期须在60秒至7天之间");
         long deadline=Math.multiplyExact(Instant.now().getEpochSecond()+lifetime,properties.isFisco()?1000:1);
+        if(action==1 || action==3) {
+            long day=jdbc.queryForObject("select day_index from mint_quota_admission where settlement_id=?",Long.class,settlement);
+            long endOfDaySeconds=Math.subtractExact(Math.multiplyExact(day+1,86400),8*3600+1);
+            deadline=Math.min(deadline,Math.multiplyExact(endOfDaySeconds,properties.isFisco()?1000:1));
+        }
         Proposal p=new Proposal(id,settlement,action,account,amount,deadline,"",properties.getContractAddress(),"MULTISIG",null);
         String digest=digest(p);
         jdbc.update("insert into governance_proposal(id,request_key,settlement_id,action,account_id,amount,deadline,digest,contract_address,state,created_by) values(?,?,?,?,?,?,?,?,?,'MULTISIG',?)",
@@ -94,7 +101,7 @@ public class GovernanceService {
 
     public String mintCalldata(String settlement,String account,BigInteger amount) {
         Proposal p=load(settlement);
-        if(p.action!=1 || !settlement.equals(p.settlement) || !account.equals(p.account) || !amount.equals(BigInteger.valueOf(p.amount))) throw new IllegalStateException("提案与发币结算不一致");
+        if((p.action!=1 && p.action!=3) || !settlement.equals(p.settlement) || !account.equals(p.account) || !amount.equals(BigInteger.valueOf(p.amount))) throw new IllegalStateException("提案与发币结算不一致");
         return calldata(p);
     }
 
@@ -123,6 +130,13 @@ public class GovernanceService {
 
     private void verifyDomain(Proposal p) {
         if(!properties.getContractAddress().equalsIgnoreCase(p.contract) || !p.digest.equals(digest(p))) throw new IllegalStateException("提案的链或合约域已变化，请恢复原配置");
+        if(p.action==1 || p.action==3) {
+            var quota=jdbc.queryForMap("select * from mint_quota_admission where settlement_id=?",p.settlement);
+            String policy=Numeric.toHexString((byte[])call(new Function("issuancePolicyHash",List.of(),List.of(new TypeReference<Bytes32>(){}))).get(0).getValue());
+            if(!policy.equals(quota.get("policy_hash")))throw new IllegalStateException("提案发行政策已变化");
+            boolean reviewed=((Number)quota.get("lifetime_review")).intValue()==1;
+            if(reviewed!=(p.action==3))throw new IllegalStateException("累计复核标记与签名动作不一致");
+        }
     }
     private String digest(Proposal p) {return Numeric.toHexString((byte[])call(new Function("proposalDigest",args(p),List.of(new TypeReference<Bytes32>(){}))).get(0).getValue());}
     private List<Type> args(Proposal p) {return new ArrayList<>(List.of(new Bytes32(Numeric.hexStringToByteArray(Hash.sha3String(p.id))),new Uint8(p.action),new Utf8String(p.account),new Uint256(p.amount),new Uint256(p.deadline)));}
@@ -144,7 +158,11 @@ public class GovernanceService {
         if(rows.isEmpty()) throw new IllegalArgumentException("提案不存在");return rows.get(0);
     }
     private Map<String,Object> view(Proposal p) {
-        Map<String,Object> out=new LinkedHashMap<>();out.put("id",p.id);out.put("settlementId",p.settlement);out.put("action",p.action==1?"MINT":"FREEZE");out.put("account",p.account);out.put("value",Long.toString(p.amount));out.put("deadline",p.deadline);out.put("digest",p.digest);out.put("contract",p.contract);out.put("state",p.state);out.put("txHash",p.hash);
+        Map<String,Object> out=new LinkedHashMap<>();out.put("id",p.id);out.put("settlementId",p.settlement);out.put("action",p.action==1?"MINT":p.action==3?"MINT_LIFETIME_REVIEW":"FREEZE");out.put("account",p.account);out.put("value",Long.toString(p.amount));out.put("deadline",p.deadline);out.put("digest",p.digest);out.put("contract",p.contract);out.put("state",p.state);out.put("txHash",p.hash);
+        if(p.action==1 || p.action==3) {
+            var quota=jdbc.queryForMap("select day_index,max_supply,lifetime_threshold,global_daily_limit,account_daily_limit,lifetime_review,policy_hash from mint_quota_admission where settlement_id=?",p.settlement);
+            Map<String,Object> readable=new LinkedHashMap<>();quota.forEach((key,value)->readable.put(key,String.valueOf(value)));out.put("issuancePolicy",readable);
+        }
         out.put("approvers",jdbc.queryForList("select approver from governance_approval where proposal_id=? order by approver",String.class,p.id));return out;
     }
     private static final class Proposal {

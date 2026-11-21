@@ -42,6 +42,7 @@ class ShardingIntegrationTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired ShardRouting routing;
     @Autowired SettlementService settlements;
+    @Autowired org.example.timecoinweb.config.BlockchainProperties blockchain;
     @Autowired ChainTransactionService submissions;
     @Autowired PlatformTransactionManager manager;
     @Autowired SettlementDispatcher dispatcher;
@@ -51,7 +52,10 @@ class ShardingIntegrationTests {
     @MockitoBean(answers=org.mockito.Answers.RETURNS_DEEP_STUBS) Web3j web3j;
     JdbcTemplate physical;
     @TestConfiguration static class Signing { @Bean Credentials credentials() {return Credentials.create("1");} }
-    @BeforeEach void setup() {
+    @BeforeEach void setup() throws Exception {
+        IssuanceTestSupport.configure(blockchain);blockchain.setGovernanceEnabled(false);
+        when(chain.callView(any())).thenAnswer(call->IssuanceTestSupport.view(call.getArgument(0),blockchain));
+        jdbc.update("delete from mint_quota_admission");
         listeners.stop();
         new org.springframework.amqp.rabbit.core.RabbitAdmin(rabbit).purgeQueue(org.example.timecoinweb.config.SettlementMessaging.QUEUE,false);
         physical=new JdbcTemplate(new DriverManagerDataSource("jdbc:mysql://localhost:3307/timebank_sharding_test?allowPublicKeyRetrieval=true","root","p1-local-test-only"));

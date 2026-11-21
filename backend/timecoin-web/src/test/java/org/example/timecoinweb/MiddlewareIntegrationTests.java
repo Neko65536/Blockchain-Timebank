@@ -50,6 +50,7 @@ class MiddlewareIntegrationTests {
     @Autowired RabbitListenerEndpointRegistry listeners;
     @Autowired SettlementDispatcher dispatcher;
     @Autowired SettlementService settlements;
+    @Autowired org.example.timecoinweb.config.BlockchainProperties blockchain;
     @Autowired NoticeService notices;
     @MockitoBean TimeCoinChainService chain;
     @Autowired org.example.timecoinweb.rag.KnowledgeService knowledge;
@@ -86,6 +87,9 @@ class MiddlewareIntegrationTests {
 
     @BeforeEach
     void prepare() throws Exception {
+        IssuanceTestSupport.configure(blockchain);blockchain.setGovernanceEnabled(false);
+        when(chain.callView(any())).thenAnswer(call->IssuanceTestSupport.view(call.getArgument(0),blockchain));
+        jdbc.update("delete from mint_quota_admission");
         listeners.stop();
         RabbitAdmin admin = new RabbitAdmin(rabbit);
         admin.purgeQueue(SettlementMessaging.QUEUE, false);

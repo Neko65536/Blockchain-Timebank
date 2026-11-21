@@ -14,6 +14,24 @@ CREATE TABLE IF NOT EXISTS chain_submission (
 );
 
 -- 管理操作数量较少，不按月分片；结算通过settlement_id关联原分片。
+-- 每日受理额度包含待审/结果未知/失败请求；重试不重复占额，不因未知链结果释放。
+CREATE TABLE IF NOT EXISTS mint_quota_lock (
+  scope_key VARCHAR(66) PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS mint_quota_admission (
+  settlement_id VARCHAR(36) PRIMARY KEY,
+  scope_key VARCHAR(66) NOT NULL,
+  account_id VARCHAR(64) NOT NULL,
+  day_index BIGINT NOT NULL,
+  amount BIGINT NOT NULL,
+  lifetime_review SMALLINT NOT NULL,
+  policy_hash VARCHAR(66) NOT NULL,
+  max_supply BIGINT NOT NULL,
+  lifetime_threshold BIGINT NOT NULL,
+  global_daily_limit BIGINT NOT NULL,
+  account_daily_limit BIGINT NOT NULL,
+  INDEX ix_mint_quota_day(scope_key,day_index,account_id)
+);
 CREATE TABLE IF NOT EXISTS governance_proposal (
   id VARCHAR(36) PRIMARY KEY,
   request_key VARCHAR(66) NOT NULL UNIQUE,

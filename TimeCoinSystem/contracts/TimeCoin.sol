@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
+import "./IssuanceLimits.sol";
 
 /**@title TimeCoin system contract 1.0
  * @author 康凤轩
  * @notice This contract is for managing the time coin of users
  */
-contract TimeCoin {
+contract TimeCoin is IssuanceLimits {
     // 管理员地址
     address public owner;
 
@@ -17,7 +18,7 @@ contract TimeCoin {
     event Mint(string to, uint256 value);
 
     // 构造函数，设置合约的拥有者
-    constructor() {
+    constructor(uint256[5] memory limits) IssuanceLimits(limits) {
         owner = msg.sender;
     }
 
@@ -32,7 +33,7 @@ contract TimeCoin {
 
     // 发放时间币给指定用户
     function mint(string memory userId, uint256 amount) public onlyOwner {
-        require(amount > 0, "Amount must be greater than 0");
+        _consumeMint(userId,amount,false);
         balances[userId] += amount;
         emit Mint(userId, amount);
     }

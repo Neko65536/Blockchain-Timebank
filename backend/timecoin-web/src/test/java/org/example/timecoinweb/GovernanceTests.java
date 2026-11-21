@@ -28,18 +28,19 @@ class GovernanceTests {
         new ResourceDatabasePopulator(new ClassPathResource("schema-h2.sql"),new ClassPathResource("schema-chain-submission.sql"),new ClassPathResource("schema-settlement.sql")).execute(source);
         jdbc=new JdbcTemplate(source);jdbc.update("insert into `user`(id,username,password,role) values(8001,'gov-admin','test',3),(8002,'gov-target','test',1)");
         BlockchainProperties props=new BlockchainProperties();props.setGovernanceEnabled(true);props.setContractAddress("0x"+"12".repeat(20));
+        IssuanceTestSupport.configure(props);
         chain=mock(TimeCoinChainService.class);when(chain.isChainReady()).thenReturn(true);
         try {when(chain.callView(any())).thenAnswer(call->{Function f=call.getArgument(0);
             if(f.getName().equals("proposalDigest")) return List.of(new Bytes32(Numeric.hexStringToByteArray(digest)));
             if(f.getName().equals("threshold")) return List.of(new Uint256(2));
             if(f.getName().equals("isApprover")) return List.of(new Bool(List.of(a.getAddress(),b.getAddress()).contains(f.getInputParameters().get(0).getValue())));
-            throw new IllegalArgumentException();
+            return IssuanceTestSupport.view(f,props);
         });}catch(Exception impossible){throw new RuntimeException(impossible);}
         DefaultListableBeanFactory beans=new DefaultListableBeanFactory();beans.registerSingleton("chain",chain);
         ShardRouting routing=new ShardRouting(jdbc);DataSourceTransactionManager manager=new DataSourceTransactionManager(source);
         governance=new GovernanceService(jdbc,manager,props,routing,beans.getBeanProvider(TimeCoinChainService.class),beans.getBeanProvider(ChainTransactionService.class));
         beans.registerSingleton("governance",governance);
-        settlements=new SettlementService(jdbc,manager,chain,mock(CoinBalanceLedgerService.class),mock(ActivityMapper.class),mock(VolMapper.class),props,new tools.jackson.databind.ObjectMapper(),routing);
+        settlements=new SettlementService(jdbc,manager,chain,mock(CoinBalanceLedgerService.class),mock(ActivityMapper.class),mock(VolMapper.class),props,new tools.jackson.databind.ObjectMapper(),routing,new MintQuotaService(jdbc,props,chain));
         ReflectionTestUtils.setField(settlements,"governance",beans.getBeanProvider(GovernanceService.class));
     }
     String signature(Credentials key) {
@@ -60,6 +61,9 @@ class GovernanceTests {
         assertTrue(governance.mintCalldata(id,"8002",BigInteger.TEN).startsWith("0x"));
         assertThrows(IllegalStateException.class,()->governance.mintCalldata(id,"8002",BigInteger.ONE));
         assertEquals(id,settlements.submitTransfer(8001,"request-mint-001","ADMIN_MINT",null,"8002",BigInteger.TEN).get("settlementId"));
+        assertEquals(1,jdbc.queryForObject("select count(*) from mint_quota_admission",Integer.class));
+        assertTrue(governance.list().get(0).containsKey("issuancePolicy"));
+        assertThrows(IllegalArgumentException.class,()->settlements.submitTransfer(8001,"request-mint-001","ADMIN_MINT",null,"8002",BigInteger.TEN,true));
     }
     @Test void expirationAndDomainChangesNeverReleaseSettlement() {
         String id=(String)settlements.submitTransfer(8001,"request-mint-002","ADMIN_MINT",null,"8002",BigInteger.TEN).get("settlementId");
@@ -72,5 +76,12 @@ class GovernanceTests {
         assertEquals(id,governance.proposeFreeze(8001,"freeze-001","8002",true).get("id"));
         assertThrows(IllegalArgumentException.class,()->governance.proposeFreeze(8001,"freeze-001","8002",false));
         assertThrows(IllegalArgumentException.class,()->GovernanceService.recover(digest,"not-a-signature"));
+    }
+    @Test void reviewedMintHasDistinctSignedActionAndQuotaDayBoundsDeadline(){
+        String id=(String)settlements.submitTransfer(8001,"reviewed-mint-001","ADMIN_MINT",null,"8002",BigInteger.TEN,true).get("settlementId");
+        assertEquals(3,jdbc.queryForObject("select action from governance_proposal where id=?",Integer.class,id));
+        var proposal=governance.list().get(0);assertEquals("MINT_LIFETIME_REVIEW",proposal.get("action"));
+        long day=jdbc.queryForObject("select day_index from mint_quota_admission where settlement_id=?",Long.class,id);
+        assertEquals(day,(((Number)proposal.get("deadline")).longValue()+28800)/86400);
     }
 }

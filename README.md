@@ -86,7 +86,7 @@ npm install
 npx hardhat node
 ```
 
-另开终端部署：
+部署前按`TimeCoinSystem/.env.example`显式填写四个发行额度、operator、部署域和独立审批地址。默认部署`GovernedTimeCoin`；未填写时拒绝部署。仅兼容测试可显式设置`DEPLOY_LEGACY_TIMECOIN=true`部署受额度限制的旧接口合约，该模式不能豁免累计复核阈值。Hardhat自动部署与手动部署均使用这些参数。另开终端部署：
 
 ```powershell
 cd TimeCoinSystem
@@ -118,6 +118,10 @@ npx hardhat deploy --network localhost
 | `DB_PASSWORD` | MySQL 密码 |
 | `REDIS_HOST/PORT/PASSWORD`、`RABBITMQ_HOST/PORT/USER/PASSWORD` | 中间件连接 |
 | `BLOCKCHAIN_ENABLED`、`BLOCKCHAIN_RPC_URL`、`BLOCKCHAIN_CONTRACT_ADDRESS`、`BLOCKCHAIN_PRIVATE_KEY` | 链开关与连接（默认本机 Hardhat + 演示私钥，生产必须替换） |
+| `BLOCKCHAIN_MAX_SUPPLY` | 总发行硬上限，试点建议20000000 |
+| `BLOCKCHAIN_LIFETIME_MINT_THRESHOLD` | 单账户累计铸币人工复核阈值，试点建议100000 |
+| `BLOCKCHAIN_GLOBAL_DAILY_MINT_LIMIT`、`BLOCKCHAIN_ACCOUNT_DAILY_MINT_LIMIT` | 全局/单账户每日硬上限，试点建议100000/1440 |
+| `BLOCKCHAIN_GOVERNANCE_ENABLED` | 普通配置默认true；dev默认关闭链与治理；FISCO启用治理 |
 | `AI_CHAT_ENABLED`、`AI_CHAT_BASE_URL`、`AI_CHAT_API_URL`、`AI_CHAT_API_KEY`、`AI_CHAT_MODEL` | 大模型端点（OpenAI 兼容，**须支持原生 tool_calls**）；默认 key 为空，不配置则 Agent/RAG 不调用远程模型 |
 | `AI_RAG_EMBEDDING_MODE/URL/KEY/MODEL/DIMENSIONS`、`AI_RAG_ANSWER_MODE` | RAG：`remote`/`local-hash` 与 `model`/`extractive` |
 | `AI_RAG_MQ_ENABLED` | 默认跟随 `settlement.mq-enabled`；关闭时文档导入保持 `PENDING` |
@@ -184,6 +188,18 @@ sequenceDiagram
         Note over W,C: 不生成第二笔付款；过期不重签
     end
 ```
+
+### 时间币发行规则（J1）
+
+1币=1分钟服务时长，单次答谢上限仍为999。上述四个发行参数在Java中为无默认值的BigInteger；链启用时缺失、非正数或大小关系非法即启动失败。合约部署时固定全部参数，不提供运行时修改入口。新发币请求会核对链上政策，旧ABI或配置不匹配时拒绝受理。
+
+`TimeCoin`与`GovernedTimeCoin`共用链上`totalSupply/lifetimeMinted/globalDailyMinted/accountDailyMinted`计数器，mint原子检查额度，转账不增加发行量。总量与每日额度不可经多签豁免；跨累计阈值须在PC增发页明确申请复核，生成动作`MINT_LIFETIME_REVIEW`，审批签名绑定该动作与不可变发行政策。普通MINT签名不能改成复核签名；治理页展示四个额度、政策摘要及日窗口。
+
+日窗口按北京时间自然日计算：Ethereum为`(timestamp+28800)/86400`，FISCO先除以1000归一化毫秒。多签Mint的deadline不得晚于其受理日结束，合约也拒绝不属于当前日的Mint提案。服务端`mint_quota_admission`与结算单同事务登记，按链域加锁约束全局/账户当日受理金额；幂等重试不重复扣额，事务回滚撤销占额。当日待审、失败和结果未知的请求均保留受理额度，次日重新使用新窗口；不因超时自动释放，以免重复发币。此受理口径比链上实际发行量保守，不能用它替代发行量报表。
+
+**升级与迁移边界。** 旧部署不是代理合约，改源码不会升级链上代码。新增表位于可重复执行的`schema-chain-submission.sql`，关闭自动初始化时须先执行该文件。新空白试点需部署新合约，并同步后端地址、发行参数、治理配置和signer白名单。已有余额的环境须先暂停旧域新增结算、确认或隔离全部未决交易、备份数据库与链数据并核对余额和历史发行；不能直接切换到零余额新合约，不能以清空凭据或把余额重新Mint当作迁移。当前没有自动余额/历史发行量导入工具，非空旧域切换仍需单独审核迁移方案；本次验证使用隔离的新合约，未迁移或清理用户旧链资产。
+
+J1集中验证：后端`package`含真实MySQL月分片、Redis、RabbitMQ和FISCO共131项，128通过、3项条件跳过；Hardhat合约13项通过，PC构建通过。覆盖并发配额、同请求重试、事务回滚、北京时间跨日、累计复核签名不可篡改、硬上限不能豁免、旧合约/错配置拒绝受理。FISCO端到端验证独立signer签名Mint、转账及回执丢失后原交易恢复，并核对四类发行计数；日志位于`backend/timecoin-web/target/j1-*.log`。未执行生产迁移或K8s发布。
 
 ### AI 能力
 
@@ -252,6 +268,8 @@ sequenceDiagram
 
 ## 九、已知边界（诚实声明）
 
+- **账户不等于自然人**：无实名/KYC，单账户发行额度按系统userId约束，多号注册仍可能绕过账户额度；不能承诺实名防重。总量和全局每日硬上限不受多号影响。手机号唯一性、异常注册检测和人工复核不能替代实名，本轮未将其宣称为已完成能力。
+- **J项进度**：J1额度约束已实现，旧余额自动迁移未实现；J2签到凭证与答谢资格、J3批量预算、J4禁用/JWT撤销、J5补偿追讨、J6—J8业务并发、J9密码策略、J10数据库约束、J11多维对账仍待后续完成，不因发行限额补齐而视为整体业务闭环完成。
 - **分表非分库**：单物理数据源按月分表，未实现多库分片 / XA；`user/activity` 广播表配置在单源下仍各只有一份。
 - **向量库为内存实现**：无 ANN、pgvector 或 Milvus 适配，适用于小规模知识库。
 - **模型效果未做生成质量评测**：已有 24 条标注的离线 RAG 评测集，只校验引用与拒答决策；未接真实付费供应商做生成质量 / 语义检索评测，默认模型名不构成 tool_calls 能力保证。
@@ -279,7 +297,7 @@ taskkill /PID <PID> /F
 
 **提示"限流服务暂不可用" / MQ 连接失败**：检查 Redis(6379) 与 RabbitMQ(5672) 是否运行；限流为 fail-closed，Redis 不可用会直接拒绝请求。
 
-**链上交易未确认、余额不变**：若重启过 Hardhat，旧链的 `chain_submission` 记录会把 nonce 顶高导致 `Nonce too high`、交易无法广播。处理方式是备份后清理链结算相关表（见 `.workbuddy/memory/2026-11-20.md`）再重新提交。
+**链上交易未确认、余额不变**：先核验连接的链域、合约地址、原交易哈希和nonce。重建Hardhat链不等同普通重启，不能用删除`chain_submission`或重新提交已付订单修复结果未知；应隔离旧域未决记录并核对原链，按迁移流程处理，保留交易凭据与审计。
 
 ---
 

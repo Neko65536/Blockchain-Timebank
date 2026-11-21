@@ -24,6 +24,13 @@
         <p>合约：{{ selected.contract }}</p><p>提案：{{ selected.id }}</p>
         <p>操作：{{ selected.action }}；账户：{{ selected.account }}；值：{{ selected.value }}</p>
         <p>签名截止参数：{{ selected.deadline }}（以合约时间单位为准）</p>
+        <template v-if="selected.issuancePolicy">
+          <p v-if="selected.action==='MINT_LIFETIME_REVIEW'">此提案明确申请超过账户累计铸币阈值，请人工复核必要性；总量和每日上限仍不可突破。</p>
+          <p>总发行上限：{{ selected.issuancePolicy.max_supply }}；累计复核阈值：{{ selected.issuancePolicy.lifetime_threshold }}</p>
+          <p>全局每日上限：{{ selected.issuancePolicy.global_daily_limit }}；账户每日上限：{{ selected.issuancePolicy.account_daily_limit }}</p>
+          <p>北京时间日窗口编号：{{ selected.issuancePolicy.day_index }}；该日结束后提案不可执行。</p>
+          <p>发行政策摘要：{{ selected.issuancePolicy.policy_hash }}</p>
+        </template>
         <p>对以下32字节摘要使用personal_sign，签名须为0x开头的65字节十六进制：</p>
         <el-input :value="selected.digest" readonly aria-label="提案摘要" />
         <el-input v-if="selected.state==='MULTISIG'" v-model="signature" type="textarea" :rows="3" placeholder="粘贴独立钱包生成的签名；不要填写私钥" />
