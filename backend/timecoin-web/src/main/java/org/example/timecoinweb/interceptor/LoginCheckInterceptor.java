@@ -54,6 +54,10 @@ public class LoginCheckInterceptor implements HandlerInterceptor {
         if (user == null || user.getRole() == null || user.getRole() != role || role < 1 || role > 3) {
             return reject(response, 401, "NOT_LOGIN");
         }
+        // J4：冻结账号即时失效——即使 token 未过期也拒绝，实现「冻结即停权」
+        if (user.getStatus() != null && user.getStatus() == 0) {
+            return reject(response, 401, "ACCOUNT_FROZEN");
+        }
         boolean allowed = under(path, "/info")
                 || (role == 3 && (under(path, "/administrator") || under(path, "/users/administrator") || "/dashboard/stats".equals(path)))
                 || (role == 1 && (under(path, "/users/old") || under(path, "/users/volold")))

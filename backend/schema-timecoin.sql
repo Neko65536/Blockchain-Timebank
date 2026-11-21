@@ -26,7 +26,8 @@ CREATE TABLE user (
   address VARCHAR(255) DEFAULT NULL,
   create_time DATETIME DEFAULT NULL,
   update_time DATETIME DEFAULT NULL,
-  image VARCHAR(512) DEFAULT NULL
+  image VARCHAR(512) DEFAULT NULL,
+  status SMALLINT NOT NULL DEFAULT 1 COMMENT '1正常 0冻结'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE old (
@@ -96,6 +97,7 @@ CREATE TABLE compensation_record (
   id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   activity_id INT NOT NULL,
   volunteer_table_id INT NOT NULL,
+  volunteer_user_id INT NULL COMMENT 'J5：链上扣回用的志愿者系统账户 id',
   elder_user_id INT NOT NULL,
   amount INT NOT NULL,
   status SMALLINT NOT NULL DEFAULT 0 COMMENT '0 待追讨 / 1 已追讨 / 2 平台核销',

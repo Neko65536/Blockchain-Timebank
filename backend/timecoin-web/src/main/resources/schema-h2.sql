@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS activity (
   extra_json CLOB DEFAULT NULL,
   remain SMALLINT NOT NULL DEFAULT 0,
   volunteer_reward INT NOT NULL DEFAULT 0,
+  CONSTRAINT ck_act_quota CHECK (quota > 0),
+  CONSTRAINT ck_act_reward CHECK (volunteer_reward >= 0),
   CONSTRAINT fk_act_old FOREIGN KEY (old_id) REFERENCES old(id),
   CONSTRAINT fk_act_admi FOREIGN KEY (administrator_id) REFERENCES administrator(id)
 );
@@ -97,8 +99,10 @@ CREATE TABLE IF NOT EXISTS compensation_record (
   amount INT NOT NULL,
   status SMALLINT NOT NULL DEFAULT 0,
   create_time TIMESTAMP DEFAULT NULL,
-  update_time TIMESTAMP DEFAULT NULL
+  update_time TIMESTAMP DEFAULT NULL,
+  CONSTRAINT ck_comp_amount CHECK (amount > 0)
 );
+ALTER TABLE compensation_record ADD COLUMN IF NOT EXISTS volunteer_user_id INT;
 CREATE INDEX IF NOT EXISTS idx_compensation_status ON compensation_record(status);
 
 -- 默认管理员（仅当不存在时插入；PC 端可用 admin / 123456 登录）
@@ -111,6 +115,10 @@ AND NOT EXISTS (SELECT 1 FROM administrator a WHERE a.user_id = u.id);
 
 ALTER TABLE `user` ADD COLUMN IF NOT EXISTS coin_balance BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE `user` ADD COLUMN IF NOT EXISTS balance_sync_time TIMESTAMP NULL;
+-- J4：用户冻结状态，1 正常 / 0 冻结；冻结用户被登录拦截器拒绝
+ALTER TABLE `user` ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 1;
+-- J10：余额不为负的 DB 兜底约束
+ALTER TABLE `user` ADD CONSTRAINT IF NOT EXISTS ck_user_balance CHECK (coin_balance >= 0);
 
 CREATE TABLE IF NOT EXISTS chain_account_mirror (
   account_id VARCHAR(64) NOT NULL PRIMARY KEY,

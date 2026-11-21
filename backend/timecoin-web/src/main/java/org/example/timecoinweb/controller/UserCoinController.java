@@ -32,6 +32,8 @@ public class UserCoinController {
     private PasswordService passwordService;
     @Autowired
     private org.example.timecoinweb.service.SettlementService settlements;
+    @Autowired
+    private org.example.timecoinweb.service.BalanceReadCache balanceCache;
 
     @GetMapping("/balance")
     public Result getMyBalance(@RequestHeader("token") String token) {
@@ -48,7 +50,16 @@ public class UserCoinController {
                 return Result.success(body);
             }
 
-            BigInteger bal = timeCoinChainService.balanceOf(userId);
+            // J8：短 TTL 缓存，减少热点余额查询的链上 RPC；写操作后主动失效
+            BigInteger bal = balanceCache.get(userId, () -> {
+                try {
+                    return timeCoinChainService.balanceOf(userId);
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new IllegalStateException("余额查询失败", e);
+                }
+            });
             body.put("balance", bal.toString());
             body.put("chainReady", true);
             return Result.success(body);

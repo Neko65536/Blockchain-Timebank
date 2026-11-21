@@ -20,6 +20,8 @@ public class CompensationController {
 
     @Autowired
     private CompensationMapper compensationMapper;
+    @Autowired
+    private org.example.timecoinweb.service.CompensationService compensationService;
 
     @GetMapping("/list")
     public Result getList(@RequestParam(required = false) Short status) {
@@ -45,15 +47,36 @@ public class CompensationController {
         }
     }
 
+    /**
+     * J5：创建违约追讨记录（答谢后服务未履约时由管理员发起）。
+     */
+    @PostMapping
+    public Result create(@RequestBody Map<String, Object> request) {
+        try {
+            int activityId = ((Number) request.get("activityId")).intValue();
+            int volunteerTableId = ((Number) request.get("volunteerTableId")).intValue();
+            Integer volunteerUserId = request.get("volunteerUserId") == null ? null
+                    : ((Number) request.get("volunteerUserId")).intValue();
+            int elderUserId = ((Number) request.get("elderUserId")).intValue();
+            int amount = ((Number) request.get("amount")).intValue();
+            var record = compensationService.create(activityId, volunteerTableId, volunteerUserId, elderUserId, amount);
+            return Result.success(record);
+        } catch (Exception e) {
+            log.warn("创建追讨记录失败", e);
+            return Result.error("创建失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * J5：处理追讨，action=1 执行链上扣回并置「已追讨」，action=2 平台核销。
+     * 终态重复处理幂等，不重复扣回。
+     */
     @PostMapping("/process/{id}")
     public Result processRecord(@PathVariable Integer id, @RequestBody Map<String, Object> request) {
         try {
-            Short status = Short.valueOf(request.get("status").toString());
-            if (status != 1 && status != 2) {
-                return Result.error("状态值无效：1 已追讨，2 平台核销");
-            }
-            compensationMapper.updateStatus(id, status, LocalDateTime.now());
-            return Result.success(null);
+            short action = Short.parseShort(request.get("action").toString());
+            short status = compensationService.process(id, action);
+            return Result.success(Map.of("status", status));
         } catch (Exception e) {
             log.warn("处理追讨记录失败 id={}", id, e);
             return Result.error("处理失败: " + e.getMessage());

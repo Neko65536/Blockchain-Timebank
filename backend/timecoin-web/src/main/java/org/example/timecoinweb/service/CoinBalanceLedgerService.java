@@ -41,6 +41,7 @@ public class CoinBalanceLedgerService {
     private final ObjectMapper objectMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final org.example.timecoinweb.config.ShardRouting routing;
+    private final BalanceReadCache balanceReadCache;
 
     @Transactional(rollbackFor = Exception.class)
     public void recordMint(String userId, BigInteger amount, String txHash, String bizType, String bizRef) {
@@ -59,6 +60,7 @@ public class CoinBalanceLedgerService {
         txLog.setBizRef(bizRef);
         chainTxLogMapper.insert(txLog);
         creditAccount(userId, amt);
+        balanceReadCache.invalidate(userId); // J8
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -80,6 +82,8 @@ public class CoinBalanceLedgerService {
         chainTxLogMapper.insert(txLog);
         debitAccount(fromUserId, amt);
         creditAccount(toUserId, amt);
+        balanceReadCache.invalidate(fromUserId); // J8
+        balanceReadCache.invalidate(toUserId);
     }
 
     /**
@@ -180,6 +184,15 @@ public class CoinBalanceLedgerService {
         summary.put("autoFix", autoFix);
         summary.put("runTime", LocalDateTime.now().toString());
 
+        // J11：结算单↔链上交易双向对账 + 铸币总量守恒断言（只读，不自动改数据）
+        try {
+            Map<String, Object> extended = reconcileSettlementsAndSupply();
+            summary.putAll(extended);
+        } catch (Exception e) {
+            log.warn("扩展对账失败", e);
+            summary.put("extendedReconcileError", e.getMessage());
+        }
+
         persistReconcileLog(totalChecked, mismatches.size(), fixedCount, true, summary);
         if (!mismatches.isEmpty()) {
             log.warn("时间币余额对账发现 {} 处不一致，已修正 {}", mismatches.size(), fixedCount);
@@ -187,6 +200,53 @@ public class CoinBalanceLedgerService {
             log.info("时间币余额对账完成，共检查 {} 个账户，全部一致", totalChecked);
         }
         return summary;
+    }
+
+    /**
+     * J11：结算单↔链上交易双向对账 + 铸币总量守恒断言。只读，不自动修改数据。
+     * - SUCCEEDED 的金额类结算单必须有 tx_hash 且链上凭据为 CONFIRMED
+     * - 链上铸币累计（chain_tx_log MINT）应等于各账户余额之和（user + 账户镜像）
+     */
+    private Map<String, Object> reconcileSettlementsAndSupply() {
+        Map<String, Object> result = new java.util.HashMap<>();
+        java.util.List<Map<String, Object>> settlementIssues = new java.util.ArrayList<>();
+
+        // ① SUCCEEDED 结算单必须有已确认的链上凭据
+        java.util.List<Map<String, Object>> succeeded = jdbc.queryForList(
+                "select id, biz_type, amount, tx_hash from settlement_order where state='SUCCEEDED' and amount>0");
+        for (Map<String, Object> order : succeeded) {
+            String txHash = order.get("tx_hash") == null ? null : String.valueOf(order.get("tx_hash"));
+            if (txHash == null || txHash.isBlank()) {
+                settlementIssues.add(Map.of("settlementId", String.valueOf(order.get("id")), "issue", "SUCCEEDED但无tx_hash"));
+                continue;
+            }
+            Integer confirmed = jdbc.queryForObject(
+                    "select count(*) from chain_submission where tx_hash=? and state='CONFIRMED'", Integer.class, txHash);
+            if (confirmed == null || confirmed == 0) {
+                settlementIssues.add(Map.of("settlementId", String.valueOf(order.get("id")), "issue", "tx_hash无CONFIRMED凭据", "txHash", txHash));
+            }
+        }
+        result.put("settlementMismatches", settlementIssues);
+        result.put("settlementMismatchCount", settlementIssues.size());
+
+        // ② 铸币总量守恒：MINT 累计 - 扣回累计 == 各账户余额之和
+        Long minted = jdbc.queryForObject(
+                "select coalesce(sum(amount),0) from chain_tx_log where tx_type='MINT'", Long.class);
+        Long userBalances = jdbc.queryForObject(
+                "select coalesce(sum(coin_balance),0) from `user`", Long.class);
+        Long mirrorBalances = jdbc.queryForObject(
+                "select coalesce(sum(coin_balance),0) from chain_account_mirror", Long.class);
+        long issued = minted == null ? 0 : minted;
+        long held = (userBalances == null ? 0 : userBalances) + (mirrorBalances == null ? 0 : mirrorBalances);
+        Map<String, Object> conservation = new java.util.HashMap<>();
+        conservation.put("totalMinted", issued);
+        conservation.put("totalHeld", held);
+        conservation.put("balanced", issued == held);
+        result.put("supplyConservation", conservation);
+        if (issued != held) {
+            log.warn("铸币守恒断言失败：累计发行 {} != 账户余额合计 {}", issued, held);
+        }
+        return result;
     }
 
     private boolean claimReceipt(String txHash) {

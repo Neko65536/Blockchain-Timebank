@@ -32,7 +32,20 @@
       </div>
       <div class="location-tip">
         <i class="el-icon-info"></i>
-        请在活动地点附近（约 100 米内）完成签到
+        定位仅供参考，不能作为到场凭证；请向现场老人获取签到码
+      </div>
+    </div>
+
+    <div class="credential-card">
+      <div class="location-row"><span class="label">现场签到码</span></div>
+      <el-input
+        v-model="credential"
+        placeholder="请输入老人现场提供的签到码"
+        clearable
+      />
+      <div class="location-tip">
+        <i class="el-icon-info"></i>
+        签到码由老人在活动现场签发，5 分钟内有效
       </div>
     </div>
 
@@ -72,11 +85,12 @@ export default {
       mapLoading: true,
       mapError: '',
       signingIn: false,
+      credential: '',
     };
   },
   computed: {
     canSignIn() {
-      return !!this.address && !this.mapLoading && !this.mapError && !this.signingIn;
+      return !!this.credential && !this.signingIn;
     },
   },
   created() {
@@ -204,7 +218,7 @@ export default {
     signIn() {
       if (!this.canSignIn) return;
       this.signingIn = true;
-      request.put('users/vol/sign', { id: this.id, address: this.address })
+      request.put('users/vol/sign', { activityId: this.id, credential: this.credential })
         .then((response) => {
           if (response.code === 1) {
             this.$message.success(response.msg || '签到成功');

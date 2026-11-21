@@ -53,8 +53,12 @@ public interface UserMapper {
     @Select("SELECT role AS user_role, COUNT(*) AS role_cnt FROM `user` GROUP BY role")
     List<java.util.Map<String, Object>> countUsersByRole();
 
-    @Select("select id, username, name, role, coin_balance as coinBalance, balance_sync_time as balanceSyncTime from `user` where id = #{userId}")
+    @Select("select id, username, name, role, coin_balance as coinBalance, balance_sync_time as balanceSyncTime, status from `user` where id = #{userId}")
     User selectById(@Param("userId") Integer userId);
+
+    /** J4：冻结/解冻账号；status 仅允许 1（正常）或 0（冻结） */
+    @Update("update `user` set status=#{status}, update_time=now() where id=#{userId}")
+    int setStatus(@Param("userId") Integer userId, @Param("status") Short status);
 
     @Select("select id, username, name, role, coin_balance as coinBalance, balance_sync_time as balanceSyncTime from `user`")
     List<User> selectAllForBalanceReconcile();

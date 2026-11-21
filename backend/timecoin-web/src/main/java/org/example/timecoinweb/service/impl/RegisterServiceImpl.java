@@ -83,6 +83,10 @@ public class RegisterServiceImpl implements RegisterService{
         if (storedUser == null || !passwordService.matches(user.getPassword(), storedUser.getPassword())) {
             return null;
         }
+        // J4：冻结账号禁止登录
+        if (storedUser.getStatus() != null && storedUser.getStatus() == 0) {
+            return null;
+        }
         if (passwordService.needsUpgrade(storedUser.getPassword())) {
             String encodedPassword = passwordService.encode(user.getPassword());
             registerMapper.updatePasswordById(storedUser.getId(), encodedPassword);

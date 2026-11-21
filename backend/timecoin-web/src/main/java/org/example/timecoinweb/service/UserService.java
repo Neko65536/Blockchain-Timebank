@@ -106,7 +106,11 @@ public interface UserService {
      * @param userId
      * @return
      */
-    Boolean volSignIn(Activity activity, Integer userId);
+    /** 志愿者现场签到：提交老人在活动端签发的短时效凭证，服务端校验签名/报名/时间窗。 */
+    Boolean volSignIn(Integer activityId, Integer userId, String credential);
+
+    /** 老人/管理员为本人活动的指定志愿者签发一次性签到凭证。 */
+    String issueSignInCredential(Integer activityId, Integer volunteerUserId, Integer userId);
 
     /**
      * 用活动id和用户id查询志愿者已报名的一个活动的状态

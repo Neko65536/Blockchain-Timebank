@@ -49,8 +49,6 @@ public class UserServiceImpl implements UserService {
     @Autowired
     VolMapper volMapper;
     @Autowired
-    DistanceUtils distanceUtils;
-    @Autowired
     BlockchainProperties blockchainProperties;
     @Autowired
     TimeCoinChainService timeCoinChainService;
@@ -60,6 +58,8 @@ public class UserServiceImpl implements UserService {
     org.springframework.transaction.PlatformTransactionManager transactionManager;
     @Autowired
     org.example.timecoinweb.service.SettlementService settlements;
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired
     @Lazy
     private UserService userService;
@@ -359,6 +359,11 @@ public class UserServiceImpl implements UserService {
                         || LocalDateTime.now().isBefore(LocalDateTime.of(activity.getDate(), activity.getEnd()))) {
                     throw new IllegalStateException("活动尚未结束，无法确认完成");
                 }
+                // J2：答谢必须建立在已签到（真实到场）之上，防止给未到场者发放时间币。
+                // 已结算的历史记录（paid）跳过校验，避免影响在途结算恢复。
+                if (!paid && (locked.getSign() == null || locked.getSign() != 1)) {
+                    throw new IllegalStateException("志愿者未签到，不能确认完成并答谢");
+                }
                 if (!paid && activity.getVolunteerReward() != null && activity.getVolunteerReward() > 0) {
                     return settlements.submitReward(activity, volActivity, userId);
                 }
@@ -397,6 +402,36 @@ public class UserServiceImpl implements UserService {
         }
 
         List<Vol> volunteers = volMapper.selectUsers(activityId);
+        if (volunteers == null) volunteers = new ArrayList<>();
+
+        // J3：批量人数上限 —— 防止热点活动一键答谢放大为大量链上交易
+        int maxVolunteers = blockchainProperties.getBatchRewardMaxVolunteers();
+        if (maxVolunteers > 0 && volunteers.size() > maxVolunteers) {
+            throw new IllegalStateException("本次待答谢人数 " + volunteers.size()
+                    + " 超过单次批量上限 " + maxVolunteers + "，请分批操作");
+        }
+
+        // J3：合计金额上限 + 老人余额预检
+        int reward = activity.getVolunteerReward() != null ? activity.getVolunteerReward() : 0;
+        long pending = volunteers.stream().filter(v -> v.getStatus() == null || v.getStatus() != 1).count();
+        long totalCost = reward * pending;
+        BigInteger totalCap = blockchainProperties.getBatchRewardTotalCap();
+        if (totalCap != null && totalCap.signum() > 0
+                && BigInteger.valueOf(totalCost).compareTo(totalCap) > 0) {
+            throw new IllegalStateException("本次批量答谢合计 " + totalCost
+                    + " 时间币超过上限 " + totalCap + "，请分批操作");
+        }
+        if (totalCost > 0) {
+            // 快速失败预检：实际扣款由每笔结算的 deductCoinBalance(where coin_balance>=amount) 兜底防负。
+            // 这里不持锁，避免与子事务的长事务嵌套；并发下的最终一致性由逐笔扣款保证。
+            Long balance = jdbcTemplate.queryForObject(
+                    "select coin_balance from `user` where id=?", Long.class, elderlyUserId);
+            if (balance == null || balance < totalCost) {
+                throw new IllegalStateException("余额不足：本次批量答谢需 " + totalCost
+                        + " 时间币，当前余额 " + (balance == null ? 0 : balance));
+            }
+        }
+
         int successCount = 0;
         int acceptedCount = 0;
         int skipCount = 0;
@@ -481,28 +516,59 @@ public class UserServiceImpl implements UserService {
         return stats;
     }
 
+    @Autowired
+    org.example.timecoinweb.service.SignInCredentialService signInCredentialService;
+
+    /**
+     * J2：现场签到不再信任浏览器 GPS（可被模拟器伪造，且 DistanceUtils 的地址转坐标是 (0,0) 占位实现）。
+     * 改为校验：活动存在且在进行时间窗内 → 志愿者已报名该活动 → 老人现场签发的一次性凭证签名/有效期/绑定正确。
+     */
     @Transactional
     @Override
-    public Boolean volSignIn(Activity activity, Integer userId) {
-        //1.得到志愿者id
-        Integer volId=volMapper.selectVolId(userId);
-        //2.找到该活动的地址
-        String actAddress=activityMapper.selectAddress(activity);
+    public Boolean volSignIn(Integer activityId, Integer userId, String credential) {
+        if (activityId == null) throw new IllegalArgumentException("活动id不能为空");
+        Integer volId = volMapper.selectVolId(userId);
+        if (volId == null) throw new IllegalStateException("志愿者信息不存在，请重新登录");
 
-        //3.保存志愿者用户的签到列表
-        String userAddress=activity.getAddress();
+        Activity activity = activityMapper.selectByActId(activityId);
+        if (activity == null) throw new IllegalStateException("活动不存在");
 
-        //4.检查用户地址与活动地址是否匹配
-        double maxDistanceInMeters=100;//设置最大距离为100
-        boolean judge= distanceUtils.isWithinDistance(userAddress,actAddress,maxDistanceInMeters);
-
-        if(judge){
-            volMapper.volSignIn(volId,activity.getId());
-
-            return true;
+        // 报名关系校验：未报名者不能签到
+        if (volMapper.volSelectByActVolId(activityId, volId) == null) {
+            throw new IllegalStateException("未报名该活动，不能签到");
         }
 
-        return false;
+        // 活动时间窗校验：仅在活动进行时段内允许签到
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime start = activity.getDate() == null || activity.getBegin() == null
+                ? null : LocalDateTime.of(activity.getDate(), activity.getBegin());
+        LocalDateTime end = activity.getDate() == null || activity.getEnd() == null
+                ? null : LocalDateTime.of(activity.getDate(), activity.getEnd());
+        if (start == null || end == null || now.isBefore(start) || now.isAfter(end)) {
+            throw new IllegalStateException("不在活动签到时间窗内");
+        }
+
+        // 服务端签发的现场凭证校验（HMAC + 活动/志愿者绑定 + 短时效）
+        signInCredentialService.verify(credential, activityId, volId);
+
+        // 幂等：重复签到只更新一次，不影响已结算记录
+        VolActivity signed = volMapper.lockVolunteerActivityRow(activityId, volId);
+        if (signed == null) throw new IllegalStateException("未报名该活动，不能签到");
+        if (signed.getSign() == null || signed.getSign() != 1) volMapper.volSignIn(volId, activityId);
+        return true;
+    }
+
+    @Override
+    public String issueSignInCredential(Integer activityId, Integer volunteerUserId, Integer userId) {
+        if (activityId == null || volunteerUserId == null) throw new IllegalArgumentException("活动和志愿者不能为空");
+        // 仅活动所属老人可签发：防止任意用户替他人签到
+        Activity activity = requireOwnedActivity(activityMapper.selectByActId(activityId), userId);
+        Integer volId = volMapper.selectVolId(volunteerUserId);
+        if (volId == null) throw new IllegalStateException("志愿者信息不存在");
+        if (volMapper.volSelectByActVolId(activityId, volId) == null) {
+            throw new IllegalStateException("该志愿者未报名此活动");
+        }
+        return signInCredentialService.issue(activityId, volId);
     }
 
     @Override

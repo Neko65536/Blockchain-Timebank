@@ -167,6 +167,21 @@ PREPARE stmt FROM @ddl;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- J4：用户冻结状态，1 正常 / 0 冻结
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'status'
+    ),
+    'SELECT 1',
+    'ALTER TABLE `user` ADD COLUMN status SMALLINT NOT NULL DEFAULT 1'
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS chain_account_mirror (
   account_id VARCHAR(64) NOT NULL PRIMARY KEY,
   coin_balance BIGINT NOT NULL DEFAULT 0,
@@ -205,3 +220,51 @@ CREATE TABLE IF NOT EXISTS chain_reconcile_log (
   create_time DATETIME DEFAULT NULL,
   INDEX idx_reconcile_run_time (run_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- J5：补偿记录补志愿者系统账户 id（链上扣回用）
+SET @ddl := (
+  SELECT IF(
+    EXISTS(
+      SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'compensation_record' AND COLUMN_NAME = 'volunteer_user_id'
+    ),
+    'SELECT 1',
+    'ALTER TABLE compensation_record ADD COLUMN volunteer_user_id INT NULL'
+  )
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- J10：DB 层约束兜底，防绕过应用直接写库。用 information_schema 判断避免重复添加。
+SET @ddl := (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.TABLE_CONSTRAINTS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='activity' AND CONSTRAINT_NAME='ck_act_quota'),
+    'SELECT 1', 'ALTER TABLE activity ADD CONSTRAINT ck_act_quota CHECK (quota > 0)')
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.TABLE_CONSTRAINTS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='activity' AND CONSTRAINT_NAME='ck_act_reward'),
+    'SELECT 1', 'ALTER TABLE activity ADD CONSTRAINT ck_act_reward CHECK (volunteer_reward >= 0)')
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.TABLE_CONSTRAINTS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user' AND CONSTRAINT_NAME='ck_user_balance'),
+    'SELECT 1', 'ALTER TABLE `user` ADD CONSTRAINT ck_user_balance CHECK (coin_balance >= 0)')
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.TABLE_CONSTRAINTS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='compensation_record' AND CONSTRAINT_NAME='ck_comp_amount'),
+    'SELECT 1', 'ALTER TABLE compensation_record ADD CONSTRAINT ck_comp_amount CHECK (amount > 0)')
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

@@ -74,6 +74,16 @@ public class BlockchainProperties {
      */
     private BigInteger volunteerRewardMax = BigInteger.valueOf(999);
 
+    /**
+     * J3：单次批量答谢允许的最大志愿者人数；<=0 表示不限制。
+     */
+    private int batchRewardMaxVolunteers = 200;
+
+    /**
+     * J3：单次批量答谢的合计时间币上限；null 或 <=0 表示不限制。
+     */
+    private BigInteger batchRewardTotalCap = BigInteger.valueOf(100000);
+
     /** 是否启用定时余额对账 */
     private boolean reconcileEnabled = true;
 

@@ -271,26 +271,36 @@ public class UserController {
     }
 
     /**
-     * 志愿者用户进行定位签到
-     * @param activity
-     * @param token
-     * @return
+     * J2：老人为本人活动的指定志愿者签发一次性现场签到凭证（短时效、HMAC 签名）。
+     * 老人需在活动现场确认志愿者到场后再签发，防止远程代签。
+     */
+    @PostMapping("/old/sign-credential")
+    public Result issueSignInCredential(@RequestBody Map<String, Object> body, @RequestHeader("token") String token) {
+        Integer userId = (Integer) JwtUtils.parseJWT(token).get("id");
+        Integer activityId = body.get("activityId") == null ? null : ((Number) body.get("activityId")).intValue();
+        Integer volunteerUserId = body.get("volunteerUserId") == null ? null : ((Number) body.get("volunteerUserId")).intValue();
+        try {
+            String credential = userService.issueSignInCredential(activityId, volunteerUserId, userId);
+            return Result.success(Map.of("credential", credential));
+        } catch (RuntimeException e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    /**
+     * J2：志愿者现场签到，提交老人签发的凭证。不再信任浏览器 GPS 定位。
      */
     @PutMapping("/vol/sign")
-    public Result volSignIn(@RequestBody Activity activity,@RequestHeader("token") String token){
-        //获取志愿者用户id和活动id
-        Integer userId=(Integer) JwtUtils.parseJWT(token).get("id");
-
-        log.info("进行签到，{}，用户id，{}",activity,userId);
-
-        //利用活动id、用户id和活动的地址进行匹配
-        Boolean judge=userService.volSignIn(activity,userId);
-
-        if(judge.equals(true)){
-            return Result.success();
+    public Result volSignIn(@RequestBody Map<String, Object> body, @RequestHeader("token") String token) {
+        Integer userId = (Integer) JwtUtils.parseJWT(token).get("id");
+        Integer activityId = body.get("activityId") == null ? null : ((Number) body.get("activityId")).intValue();
+        String credential = body.get("credential") == null ? null : String.valueOf(body.get("credential"));
+        try {
+            Boolean judge = userService.volSignIn(activityId, userId, credential);
+            return Boolean.TRUE.equals(judge) ? Result.success() : Result.error("签到失败");
+        } catch (RuntimeException e) {
+            return Result.error(e.getMessage());
         }
-
-        return Result.error("签到失败，地址错误");
     }
 
     /**

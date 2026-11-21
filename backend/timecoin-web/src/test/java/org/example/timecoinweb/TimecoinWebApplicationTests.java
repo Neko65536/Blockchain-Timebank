@@ -353,7 +353,7 @@ class TimecoinWebApplicationTests {
     @Test
     void authenticatedAdminCanCreateAnotherAdmin() throws Exception {
         mvc.perform(post("/administrator/users").header("token", token(1, 3)).contentType("application/json")
-                .content("{\"username\":\"newadmin\",\"password\":\"test-password\",\"role\":3}"))
+                .content("{\"username\":\"newadmin\",\"password\":\"test-password-123\",\"role\":3}"))
                 .andExpect(jsonPath("$.code").value(1));
         assertEquals(1, jdbc.queryForObject("select count(*) from administrator a join `user` u on a.user_id=u.id where u.username='newadmin'", Integer.class));
     }
@@ -767,6 +767,8 @@ class TimecoinWebApplicationTests {
 
     private void prepareReward() {
         users.volAcceptActivity(1, 10);
+        // J2：答谢前置签到，现有结算测试须先签到才能进入答谢
+        jdbc.update("update activity_volunteer set sign=1 where activity_id=1 and volunteer_id=10");
         jdbc.update("update activity set date=DATEADD('DAY',-1,CURRENT_DATE),volunteer_reward=10");
         jdbc.update("update `user` set coin_balance=20 where id=2");
     }
@@ -806,6 +808,213 @@ class TimecoinWebApplicationTests {
             when(request.send()).thenReturn(response);
             return request;
         });
+    }
+
+    // ===== J2：现场签到凭证与答谢前置校验 =====
+    @Autowired org.example.timecoinweb.service.SignInCredentialService signCredentials;
+
+    private void makeActivityOngoing() {
+        jdbc.update("update activity set date=CURRENT_DATE, `begin`='00:00:00', `end`='23:59:59' where id=1");
+    }
+
+    @Test
+    void signInRequiresRegistrationOwnershipAndValidCredential() {
+        users.volAcceptActivity(1, 10);
+        makeActivityOngoing();
+        // 未报名者不能签到
+        assertThrows(IllegalStateException.class, () -> users.volSignIn(1, 11, "any"));
+        // 非活动所属老人不能签发
+        assertThrows(IllegalStateException.class, () -> users.issueSignInCredential(1, 10, 3));
+        String credential = users.issueSignInCredential(1, 10, 2);
+        assertTrue(users.volSignIn(1, 10, credential));
+        assertEquals(1, jdbc.queryForObject("select sign from activity_volunteer where activity_id=1 and volunteer_id=10", Integer.class));
+        // 重复签到幂等
+        assertTrue(users.volSignIn(1, 10, credential));
+    }
+
+    @Test
+    void signInRejectsForgedAndCrossBoundCredentials() {
+        users.volAcceptActivity(1, 10);
+        makeActivityOngoing();
+        String credential = users.issueSignInCredential(1, 10, 2);
+        // 篡改签名
+        String tampered = credential.substring(0, credential.length() - 2) + (credential.endsWith("A") ? "BB" : "AA");
+        assertThrows(IllegalArgumentException.class, () -> users.volSignIn(1, 10, tampered));
+        // 绑定到别的志愿者：凭证 volunteerId 不匹配
+        users.volAcceptActivity(1, 11);
+        assertThrows(IllegalArgumentException.class, () -> users.volSignIn(1, 11, credential));
+        // 空凭证
+        assertThrows(IllegalArgumentException.class, () -> users.volSignIn(1, 10, ""));
+    }
+
+    @Test
+    void signInOutsideActivityWindowIsRejected() {
+        users.volAcceptActivity(1, 10);
+        // 活动在两天后，begin/end 为 09:00-10:00，不在时间窗内
+        String credential = users.issueSignInCredential(1, 10, 2);
+        assertThrows(IllegalStateException.class, () -> users.volSignIn(1, 10, credential));
+    }
+
+    @Test
+    void rewardWithoutSignInIsRejected() {
+        users.volAcceptActivity(1, 10);
+        jdbc.update("update activity set date=DATEADD('DAY',-1,CURRENT_DATE),volunteer_reward=0");
+        VolActivity change = volunteerChange();
+        change.setStatus((short) 1);
+        assertThrows(IllegalStateException.class, () -> users.updateVolActivity(change, 2));
+    }
+
+    // ===== J3：批量答谢人数/总额上限与余额预检 =====
+    @Test
+    void batchRewardEnforcesVolunteerCountCap() {
+        users.volAcceptActivity(1, 10);
+        users.volAcceptActivity(1, 11);
+        jdbc.update("update activity set date=DATEADD('DAY',-1,CURRENT_DATE),volunteer_reward=10");
+        jdbc.update("update `user` set coin_balance=1000 where id=2");
+        int original = blockchain.getBatchRewardMaxVolunteers();
+        try {
+            blockchain.setBatchRewardMaxVolunteers(1);
+            assertThrows(IllegalStateException.class, () -> users.batchCompleteVolunteers(2, 1));
+        } finally {
+            blockchain.setBatchRewardMaxVolunteers(original);
+        }
+    }
+
+    @Test
+    void batchRewardEnforcesTotalCapAndBalancePrecheck() {
+        users.volAcceptActivity(1, 10);
+        users.volAcceptActivity(1, 11);
+        jdbc.update("update activity set date=DATEADD('DAY',-1,CURRENT_DATE),volunteer_reward=100");
+        BigInteger originalCap = blockchain.getBatchRewardTotalCap();
+        try {
+            // 总额上限：2 人 ×100 = 200 > 150
+            blockchain.setBatchRewardTotalCap(BigInteger.valueOf(150));
+            assertThrows(IllegalStateException.class, () -> users.batchCompleteVolunteers(2, 1));
+            // 余额预检：总额 200 > 余额 50
+            blockchain.setBatchRewardTotalCap(BigInteger.valueOf(100000));
+            jdbc.update("update `user` set coin_balance=50 where id=2");
+            assertThrows(IllegalStateException.class, () -> users.batchCompleteVolunteers(2, 1));
+        } finally {
+            blockchain.setBatchRewardTotalCap(originalCap);
+        }
+    }
+
+    // ===== J4：用户冻结即时失效 =====
+    @Autowired org.example.timecoinweb.mapper.UserMapper usersMapper;
+
+    @Test
+    void frozenUserCannotUseTokenOrLoginUntilUnfrozen() throws Exception {
+        // 冻结前可访问
+        mvc.perform(get("/users/old").header("token", token(2, 1))).andExpect(status().isOk());
+        usersMapper.setStatus(2, (short) 0);
+        // 冻结后 token 即时失效
+        mvc.perform(get("/users/old").header("token", token(2, 1))).andExpect(status().isUnauthorized());
+        // 冻结后不能登录
+        org.example.pojo.User login = new org.example.pojo.User();
+        login.setUsername("elder"); login.setPassword("test"); login.setRole((short) 1);
+        org.example.timecoinweb.service.RegisterService reg = context.getBean(org.example.timecoinweb.service.RegisterService.class);
+        assertNull(reg.login(login));
+        // 解冻恢复
+        usersMapper.setStatus(2, (short) 1);
+        mvc.perform(get("/users/old").header("token", token(2, 1))).andExpect(status().isOk());
+    }
+
+    // ===== J5：补偿追讨闭环 =====
+    @Autowired org.example.timecoinweb.service.CompensationService compensationService;
+
+    @Test
+    void compensationCreateAndWriteOffIsIdempotent() {
+        var record = compensationService.create(1, 10, 10, 2, 10);
+        assertEquals(0, record.getStatus().intValue());
+        // 平台核销 action=2
+        assertEquals(2, compensationService.process(record.getId(), (short) 2));
+        // 终态幂等：重复处理不报错、状态不变
+        assertEquals(2, compensationService.process(record.getId(), (short) 2));
+        assertEquals(2, compensationService.process(record.getId(), (short) 1));
+        jdbc.update("delete from compensation_record where id=?", record.getId());
+    }
+
+    @Test
+    void compensationRecoveryRequiresChainAndKeepsPendingOnFailure() {
+        var record = compensationService.create(1, 10, 10, 2, 10);
+        blockchain.setEnabled(false);
+        // 链未启用时追讨失败，记录保持待追讨
+        assertThrows(IllegalStateException.class, () -> compensationService.process(record.getId(), (short) 1));
+        assertEquals(0, jdbc.queryForObject("select status from compensation_record where id=?", Integer.class, record.getId()));
+        jdbc.update("delete from compensation_record where id=?", record.getId());
+    }
+
+    // ===== J9：密码强度策略 =====
+    @Autowired org.example.timecoinweb.service.PasswordService passwordService;
+
+    @Test
+    void passwordStrengthRejectsWeakPasswords() {
+        assertThrows(IllegalArgumentException.class, () -> passwordService.encode("short"));
+        assertThrows(IllegalArgumentException.class, () -> passwordService.encode("allletters"));
+        assertThrows(IllegalArgumentException.class, () -> passwordService.encode("12345678"));
+        assertThrows(IllegalArgumentException.class, () -> passwordService.encode("password"));
+        // 合规密码通过
+        assertTrue(passwordService.matches("StrongPass123", passwordService.encode("StrongPass123")));
+    }
+
+    // ===== J10：DB 约束兜底 =====
+    @Test
+    void dbCheckConstraintsRejectInvalidData() {
+        // 活动答谢金额为负应被 DB CHECK 拒绝
+        assertThrows(Exception.class, () -> jdbc.update(
+                "insert into activity(title,quota,deadline,date,`begin`,`end`,address,old_id,administrator_id,status,volunteer_reward) "
+                        + "values('bad',1,DATEADD('DAY',1,CURRENT_TIMESTAMP),CURRENT_DATE,'09:00:00','10:00:00','x',1,1,2,-1)"));
+        // 余额为负应被 DB CHECK 拒绝
+        assertThrows(Exception.class, () -> jdbc.update("update `user` set coin_balance=-1 where id=2"));
+        // 恢复余额，避免影响后续测试
+        jdbc.update("update `user` set coin_balance=0 where id=2");
+    }
+
+    // ===== J11：对账维度扩展 =====
+    @Autowired org.example.timecoinweb.service.CoinBalanceLedgerService ledgerService;
+
+    @Test
+    void reconcileIncludesSettlementAndSupplyDimensions() throws Exception {
+        mockChain(new AtomicBoolean(true), false);
+        Map<String, Object> summary = ledgerService.reconcileAll(false);
+        assertTrue(summary.containsKey("settlementMismatches"), "应包含结算单对账维度");
+        assertTrue(summary.containsKey("supplyConservation"), "应包含铸币守恒断言");
+        Object supply = summary.get("supplyConservation");
+        assertTrue(supply instanceof Map);
+        assertTrue(((Map<?, ?>) supply).containsKey("totalMinted"));
+        assertTrue(((Map<?, ?>) supply).containsKey("balanced"));
+    }
+
+    // ===== J8：余额读短 TTL 缓存 =====
+    @Test
+    void balanceReadCacheCachesUntilTtlAndCanBeInvalidated() {
+        var cache = new org.example.timecoinweb.service.BalanceReadCache(3);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<BigInteger> loader = () -> {
+            calls.incrementAndGet();
+            return BigInteger.valueOf(100);
+        };
+        assertEquals(BigInteger.valueOf(100), cache.get("10", loader));
+        assertEquals(BigInteger.valueOf(100), cache.get("10", loader));
+        assertEquals(1, calls.get()); // 命中缓存，未再次 RPC
+        cache.invalidate("10");
+        assertEquals(BigInteger.valueOf(100), cache.get("10", loader));
+        assertEquals(2, calls.get()); // 失效后重新加载
+        // TTL=0 关闭缓存，每次直读
+        var noCache = new org.example.timecoinweb.service.BalanceReadCache(0);
+        noCache.get("11", loader); noCache.get("11", loader);
+        assertEquals(4, calls.get());
+    }
+
+    // ===== J6：限流额度配置校验 =====
+    @Test
+    void rateLimiterRejectsNonPositiveHeavyGetLimit() {
+        var interceptor = new org.example.timecoinweb.interceptor.RedisRateLimitInterceptor(null);
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "writeLimit", 30);
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "authLimit", 10);
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "heavyGetEnabled", true);
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "heavyGetLimit", 0);
+        assertThrows(IllegalArgumentException.class, interceptor::validateLimits);
     }
 
     @SuppressWarnings("unchecked")

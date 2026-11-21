@@ -131,6 +131,10 @@
                                     {{ row.name }}
                                     <el-tag v-if="Number(row.sign) === 1" type="success" size="mini" style="margin-left: 6px;">已签到</el-tag>
                                     <el-tag v-else type="info" size="mini" style="margin-left: 6px;">未签到</el-tag>
+                                    <el-button v-if="Number(row.sign) !== 1" type="text" size="mini"
+                                        style="margin-left: 8px; padding: 0;" @click="issueSignCode(row.id)">
+                                        签发签到码
+                                    </el-button>
                                     <el-tag v-if="!isVolunteerIncomplete(row)" type="success" size="small" style="margin-left: 8px;">
                                         已完成
                                     </el-tag>
@@ -503,6 +507,22 @@ export default {
                     .catch(error => {
                         console.error('获取数据失败:', error);
                     });
+            });
+        },
+        issueSignCode(volunteerUserId) {
+            request.post('/users/old/sign-credential', {
+                activityId: this.id,
+                volunteerUserId: volunteerUserId,
+            }).then(response => {
+                if (response.code === 1) {
+                    this.$alert(response.data.credential, '现场签到码（5 分钟内有效，请交给志愿者）', {
+                        confirmButtonText: '知道了',
+                    });
+                } else {
+                    this.$message.error(response.msg || '签发失败');
+                }
+            }).catch(() => {
+                this.$message.error('签发失败，请检查网络');
             });
         },
         editUser(id) {

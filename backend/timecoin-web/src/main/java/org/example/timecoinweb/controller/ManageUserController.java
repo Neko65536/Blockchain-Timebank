@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @RestController
@@ -23,6 +24,8 @@ public class ManageUserController {
     ManageUserService manageUserService;
     @Autowired
     RegisterService registerService;
+    @Autowired
+    org.example.timecoinweb.mapper.UserMapper userMapper;
 
     //条件查询用户
     @GetMapping
@@ -73,6 +76,20 @@ public class ManageUserController {
      * @param user
      * @return
      */
+    /**
+     * J4：冻结/解冻用户。冻结后该用户所有带 token 的请求与登录均被拒绝。
+     */
+    @PutMapping("/{userId}/status")
+    public Result setStatus(@PathVariable Integer userId, @RequestBody Map<String, Object> body) {
+        Object raw = body.get("status");
+        if (!(raw instanceof Number)) return Result.error("status 必须为 1(正常) 或 0(冻结)");
+        short status = ((Number) raw).shortValue();
+        if (status != 0 && status != 1) return Result.error("status 必须为 1(正常) 或 0(冻结)");
+        if (userMapper.selectById(userId) == null) return Result.error("用户不存在");
+        userMapper.setStatus(userId, status);
+        return Result.success();
+    }
+
     @PostMapping
     public Result add(@RequestBody User user){
         //用service保存到数据库
