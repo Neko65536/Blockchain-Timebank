@@ -18,6 +18,8 @@ public class PublishAgentController {
     @PostMapping public DeferredResult<Result> create(@RequestAttribute("authenticatedUserId") int actor,@RequestHeader("Idempotency-Key") String key,@RequestBody Input input){
         return executor.submit(()->{try{return agent.create(actor,key,input.text);}catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException("模型生成失败",e);}});
     }
+    @GetMapping("/history") public Result history(@RequestAttribute("authenticatedUserId") int actor,
+            @RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="10") int size){return Result.success(agent.list(actor,page,size));}
     @GetMapping("/{id}") public Result get(@RequestAttribute("authenticatedUserId") int actor,@PathVariable String id){return Result.success(agent.get(actor,id));}
     @PutMapping("/{id}") public Result revise(@RequestAttribute("authenticatedUserId") int actor,@PathVariable String id,@RequestBody Input input){return Result.success(agent.revise(actor,id,input.revision,input.draft));}
     @PostMapping("/{id}/confirm") public Result confirm(@RequestAttribute("authenticatedUserId") int actor,@PathVariable String id,@RequestBody Input input){return Result.success(confirmation.confirm(actor,id,input.revision,input.acceptedFee,input.confirmed));}

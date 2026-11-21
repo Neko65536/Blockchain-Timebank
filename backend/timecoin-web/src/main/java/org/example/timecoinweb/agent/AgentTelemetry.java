@@ -28,6 +28,7 @@ final class AgentTelemetry implements Hook {
     private long inputTokens,outputTokens,modelDurationMs;
     private int modelCalls,usageReportedCalls,toolCalls,toolFailures;
     private boolean finished;
+    private String promptHash,resultHash;
 
     AgentTelemetry(String traceId,int actor,JdbcTemplate jdbc,ObjectMapper json,List<AgentToolSpec> specs) {
         this.traceId=traceId;this.actor=actor;this.jdbc=jdbc;this.json=json;
@@ -35,6 +36,7 @@ final class AgentTelemetry implements Hook {
     }
 
     synchronized void event(String event,Map<String,Object> values) {
+        if("REACT_START".equals(event) && values.get("inputHash")!=null) promptHash=String.valueOf(values.get("inputHash"));
         Map<String,Object> detail=new LinkedHashMap<>(values);
         detail.put("traceId",traceId);
         String encoded=json.writeValueAsString(detail);
@@ -103,18 +105,32 @@ final class AgentTelemetry implements Hook {
         event("TOOL_CALL",detail);
     }
 
+    /** 由运行时在 finish 前设置终态结果哈希（不存结果原文）。 */
+    synchronized void resultHash(String value){ this.resultHash=Hash.sha3String(value); }
+
     synchronized void finish(boolean success) {
         if(finished)return;
         finished=true;
         for(ModelSpan span:List.copyOf(pendingModels))endModel(span,"CANCELLED");
         for(String id:List.copyOf(pendingTools.keySet()))endTool(id,"CANCELLED");
+        long totalDuration=elapsed(started);
         Map<String,Object> summary=new LinkedHashMap<>();
-        summary.put("durationMs",elapsed(started));summary.put("modelDurationMs",modelDurationMs);
+        summary.put("durationMs",totalDuration);summary.put("modelDurationMs",modelDurationMs);
         summary.put("modelCalls",modelCalls);summary.put("toolCalls",toolCalls);summary.put("toolFailures",toolFailures);
         summary.put("usageReportedCalls",usageReportedCalls);summary.put("usageMissingCalls",modelCalls-usageReportedCalls);
         summary.put("usageComplete",modelCalls>0 && usageReportedCalls==modelCalls);
         summary.put("inputTokens",inputTokens);summary.put("outputTokens",outputTokens);summary.put("totalTokens",inputTokens+outputTokens);
         event(success?"REACT_COMPLETE":"REACT_FAILED",summary);
+        // 独立 trace 实体：与 agent_audit 细粒度 span 并存，一行汇总，便于按 traceId 关联查询。
+        try {
+            jdbc.update("insert into agent_trace(trace_id,actor_id,status,prompt_hash,result_hash,guardrail_result,model_calls,tool_calls,tool_failures,input_tokens,output_tokens,duration_ms) "
+                            + "values(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    traceId,actor,success?"COMPLETE":"FAILED",promptHash,resultHash,"PASS",
+                    modelCalls,toolCalls,toolFailures,inputTokens,outputTokens,totalDuration);
+        } catch(Exception traceFailure) {
+            // 可观测性写入失败不得改变业务结果。
+            log.warn("agent_trace write failed traceId={}",traceId,traceFailure);
+        }
     }
 
     private static long elapsed(long start){return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start);}

@@ -102,6 +102,7 @@ public class AgentRuntime {
                 throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT,"Agent执行已取消或超时");
             if(fatal.get()!=null) throw fatal.get();
             if(output.get()==null) throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,"Agent未完成工具流程，请补充需求后重试");
+            telemetry.resultHash(json.writeValueAsString(output.get()));
             telemetry.finish(true);
             return output.get();
         } catch(RuntimeException failure) {

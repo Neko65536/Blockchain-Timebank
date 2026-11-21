@@ -4,6 +4,19 @@
     <p>描述需求后补全表单，核对费用并确认才会提交。不会自动支付。</p>
     <el-input v-model="text" type="textarea" maxlength="4000" placeholder="例如：希望周末有人陪我去社区超市买菜" />
     <el-button :loading="busy" @click="generate">生成新草稿</el-button>
+    <el-button @click="openHistory">我的历史草稿</el-button>
+    <el-dialog title="历史草稿" :visible.sync="historyVisible" width="90%">
+      <el-table :data="history.items" size="small" v-loading="historyBusy">
+        <el-table-column prop="id" label="任务编号" min-width="120" />
+        <el-table-column prop="state" label="状态" width="100" />
+        <el-table-column prop="createdAt" label="创建时间" min-width="150" />
+        <el-table-column label="操作" width="90">
+          <template slot-scope="scope"><el-button type="text" @click="loadTask(scope.row.id)">查看</el-button></template>
+        </el-table-column>
+      </el-table>
+      <el-pagination layout="prev, pager, next" :total="history.total" :page-size="history.size"
+        :current-page.sync="history.page" @current-change="loadHistory" />
+    </el-dialog>
     <template v-if="task">
       <p>任务：{{ task.id }} · {{ stateLabel }}</p>
       <el-form label-position="top" :disabled="busy || task.state === 'SUBMITTED'">
@@ -31,6 +44,7 @@ import request from '@/utils/request';
 const base = '/users/old/agent/publish';
 export default {
   data: () => ({ text: '', task: null, draft: {}, extra: {}, saved: '', busy: false, key: null,
+    historyVisible: false, historyBusy: false, history: { items: [], total: 0, page: 1, size: 10 },
     fields: [ { key:'title',label:'标题' },{key:'description',label:'描述',type:'textarea'}, {key:'quota',label:'名额',numeric:true},
       {key:'date',label:'活动日期（yyyy-MM-dd）'},{key:'begin',label:'开始时间（HH:mm:ss）'},{key:'end',label:'结束时间（HH:mm:ss）'},
       {key:'deadline',label:'报名截止（yyyy-MM-ddTHH:mm:ss）'},{key:'address',label:'具体地址'},{key:'phone',label:'联系电话'},{key:'volunteerReward',label:'每人答谢时间币',numeric:true}],
@@ -50,6 +64,11 @@ export default {
     stateLabel() { return {READY:'等待确认',NEEDS_INPUT:'待补充',SUBMITTED:'已提交'}[this.task.state] || this.task.state; }
   },
   methods: {
+    openHistory() { this.historyVisible=true; this.history.page=1; this.loadHistory(); },
+    async loadHistory() { this.historyBusy=true; try {
+      this.history = this.unwrap(await request.get(base+'/history',{params:{page:this.history.page,size:this.history.size}}));
+    } catch(e) { this.$message.error('加载历史失败'); } finally { this.historyBusy=false; } },
+    async loadTask(id) { this.historyVisible=false; await this.run(async()=>this.load(this.unwrap(await request.get(base+'/'+id)))); },
     load(data) { this.task=data; this.draft=JSON.parse(JSON.stringify(data.draft)); this.extra=JSON.parse(this.draft.extraJson || '{}'); this.saved=JSON.stringify([this.draft,this.extra]); },
     async run(action) { this.busy=true; try { await action(); } catch(e) { this.$message.error((e.response && e.response.data && e.response.data.msg) || e.message || '操作失败，请重试'); } finally { this.busy=false; } },
     unwrap(r) { if(r.code!==1) throw new Error(r.msg || '请求失败');return r.data; },

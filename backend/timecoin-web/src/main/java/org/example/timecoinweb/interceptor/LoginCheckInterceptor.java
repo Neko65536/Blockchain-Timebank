@@ -33,7 +33,8 @@ public class LoginCheckInterceptor implements HandlerInterceptor {
         String path = request.getRequestURI().substring(request.getContextPath().length());
         String method = request.getMethod();
         if (("POST".equals(method) && ("/login".equals(path) || "/register".equals(path)))
-                || ("GET".equals(method) && (path.startsWith("/image/") || "/dashboard/notices".equals(path)))) {
+                || ("GET".equals(method) && (path.startsWith("/image/") || "/dashboard/notices".equals(path)
+                    || "/agreement/current".equals(path)))) {
             return true;
         }
         String jwt = request.getHeader("token");

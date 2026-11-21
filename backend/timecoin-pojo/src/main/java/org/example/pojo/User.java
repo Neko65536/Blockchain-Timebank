@@ -33,4 +33,9 @@ public class User {
     private Long coinBalance;
     /** 最近一次对账/同步时间 */
     private LocalDateTime balanceSyncTime;
+
+    /** 注册传输字段（不落 user 表）：用户同意的协议版本号。 */
+    private String agreementVersion;
+    /** 注册传输字段（不落 user 表）：是否同意协议。 */
+    private Boolean agreed;
 }

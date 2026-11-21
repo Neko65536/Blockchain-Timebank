@@ -32,10 +32,19 @@
             </el-option>
           </el-select>
         </el-form-item>
+        <el-form-item prop="agreed">
+          <el-checkbox v-model="form.agreed">我已阅读并同意</el-checkbox>
+          <el-link type="primary" @click="showAgreement">《用户协议与隐私说明》</el-link>
+          <span v-if="agreement" class="agreement-version">版本 {{ agreement.version }}</span>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="signUp" class="register-btn">注册</el-button>
         </el-form-item>
       </el-form>
+      <el-dialog title="用户协议与隐私说明" :visible.sync="agreementVisible" width="90%">
+        <p>当前生效版本：{{ agreement && agreement.version }}</p>
+        <p>本协议说明时间币仅为志愿服务时长记录，不作为法定货币或投资收益凭证；注册信息用于账号与服务匹配；链上记录不含真实姓名但用户编号可关联账号，不等同匿名化。完整条款以线下 community 公示文本为准，本系统仅记录版本号与同意时间。</p>
+      </el-dialog>
     </el-main>
   </el-container>
 </template>
@@ -86,6 +95,8 @@ export default {
   data() {
     return {
       form: {}, // 定义 form 对象
+      agreement: null,
+      agreementVisible: false,
       options: [
         { value: 1, label: '老人' },
         { value: 2, label: '志愿者' },
@@ -106,11 +117,16 @@ export default {
         confirmPassword: [
           { required: true, message: '请再次输入密码', trigger: 'blur' },
           { validator: this.validateConfirmPassword, trigger: 'blur' }
-        ]
+        ],
+        agreed: [{ validator: (rule, value, callback) => value ? callback() : callback(new Error('请先同意用户协议')), trigger: 'change' }]
       }
     };
   },
+  created() {
+    request.get('/agreement/current').then(r => { if (r.code === 1) this.agreement = r.data; }).catch(() => {});
+  },
   methods: {
+    showAgreement() { this.agreementVisible = true; },
     clearall(){
       // 清空登录和注册表单数据
       this.form = {};
@@ -125,7 +141,9 @@ export default {
     signUp() {
       this.$refs.form.validate(valid => {
         if (valid) {
-          const userData = this.form;
+          const userData = { ...this.form,
+            agreed: !!this.form.agreed,
+            agreementVersion: this.agreement ? this.agreement.version : null };
           request.post('/register', userData)
             .then(response => {
                 // 处理成功响应

@@ -120,6 +120,24 @@ class AgentRuntimeTests {
     }
     tools.jackson.databind.JsonNode event(String name){var events=events(name);assertEquals(1,events.size());return events.get(0);}
 
+    @Test void independentTraceRowStoresHashesAndCountersWithoutRawContent() {
+        AtomicInteger reads=new AtomicInteger();AtomicInteger rounds=new AtomicInteger();
+        when(source.reactModel()).thenReturn(new TestModel(){
+            public Flux<ChatResponse> stream(List<Msg> m,List<ToolSchema> t,GenerateOptions o){
+                return rounds.getAndIncrement()==0?call("read",Map.of()):call("complete",Map.of());}});
+        String id=UUID.randomUUID().toString();
+        runtime.run(1,id,"流程","private-question",tools("private-business-data",reads));
+        var traces=jdbc.queryForList("select * from agent_trace where trace_id=?",id);
+        assertEquals(1,traces.size());
+        var trace=traces.get(0);
+        assertEquals("COMPLETE",trace.get("status"));
+        assertNotNull(trace.get("prompt_hash"));assertNotNull(trace.get("result_hash"));
+        assertEquals(2,((Number)trace.get("tool_calls")).intValue());
+        assertEquals("PASS",trace.get("guardrail_result"));
+        String all=trace.toString();
+        assertFalse(all.contains("private-question"));assertFalse(all.contains("private-business-data"));
+    }
+
     @Test void cumulativeUsageIsCountedOncePerModelCallAndSynchronousFailureIsMeasured(){
         String id=UUID.randomUUID().toString();var telemetry=new AgentTelemetry(id,1,jdbc,json,List.of());
         telemetry.observeModel("test",()->Flux.just(

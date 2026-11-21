@@ -30,6 +30,8 @@ public class RegisterServiceImpl implements RegisterService{
     private VolMapper volMapper;
     @Autowired
     private PasswordService passwordService;
+    @Autowired
+    private org.example.timecoinweb.service.AgreementService agreementService;
 
 
     @Transactional
@@ -70,6 +72,9 @@ public class RegisterServiceImpl implements RegisterService{
                 admiMapper.insertByUserId(user2.getId());
                 break;
         }
+        // 协议同意与账号创建在同一事务内落库；版本号由客户端对照 /agreement/current 提交。
+        agreementService.recordAcceptance(user2.getId(), user.getAgreementVersion(),
+                Boolean.TRUE.equals(user.getAgreed()), "register");
 
         return "1";
     }

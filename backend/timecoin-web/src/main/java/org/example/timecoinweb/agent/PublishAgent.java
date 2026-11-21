@@ -63,6 +63,19 @@ public class PublishAgent {
             return get(actor,id);
         });
     }
+    /** 个人历史任务列表：只返回本人任务，白名单字段，按创建时间倒序分页。 */
+    public Map<String,Object> list(int actor,int page,int size) {
+        requireElder(actor);
+        if(page<1 || size<1 || size>50) throw new IllegalArgumentException("分页参数不合法");
+        int offset=Math.multiplyExact(page-1,size);
+        List<Map<String,Object>> rows=jdbc.queryForList("select id,state,revision,created_at from agent_task where owner_id=? order by created_at desc,id desc limit ? offset ?",actor,size,offset);
+        List<Map<String,Object>> items=new ArrayList<>();
+        for(var row:rows){Map<String,Object> item=new LinkedHashMap<>();item.put("id",row.get("id"));item.put("state",row.get("state"));
+            item.put("revision",row.get("revision"));item.put("createdAt",row.get("created_at"));items.add(item);}
+        Map<String,Object> result=new LinkedHashMap<>();result.put("items",items);result.put("page",page);result.put("size",size);
+        result.put("total",jdbc.queryForObject("select count(*) from agent_task where owner_id=?",Long.class,actor));
+        return result;
+    }
     public Map<String,Object> get(int actor,String id) {
         requireElder(actor);
         var rows=jdbc.queryForList("select * from agent_task where id=? and owner_id=?",id,actor);
