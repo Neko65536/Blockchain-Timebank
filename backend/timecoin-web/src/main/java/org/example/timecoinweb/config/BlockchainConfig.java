@@ -10,7 +10,7 @@ import org.web3j.protocol.http.HttpService;
 
 @Slf4j
 @Configuration
-@ConditionalOnProperty(name = "blockchain.backend", havingValue = "ethereum", matchIfMissing = true)
+@ConditionalOnProperty(name = "blockchain.backend", havingValue = "ethereum")
 public class BlockchainConfig {
 
     @Bean

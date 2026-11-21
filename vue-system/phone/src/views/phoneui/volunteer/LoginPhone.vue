@@ -22,7 +22,7 @@
 </template>
 
 <script>
-import { setToken } from '@/utils/auth';
+import { setToken, setRefreshToken } from '@/utils/auth';
 import request from '@/utils/request';
 
 export default {
@@ -53,7 +53,14 @@ export default {
               type: 'success'
             });
             setToken(response.data.token);
+            setRefreshToken(response.data.refreshToken);
             this.$store.commit('setToken', response.data.token);
+            // N2/N3：首登改密与协议重新同意提示（后端强制，此处仅引导）
+            if (Number(response.data.mustChangePassword) === 1) {
+              this.$message.warning('首次登录请先修改密码');
+            } else if (Number(response.data.agreementCurrent) === 1) {
+              this.$message.warning('用户协议已更新，请重新阅读并同意');
+            }
             setTimeout(() => {
               if(response.data.role === 2) this.$router.push({ name: 'HomePhone' });
               else this.$router.push({ name: 'ServerOld' });

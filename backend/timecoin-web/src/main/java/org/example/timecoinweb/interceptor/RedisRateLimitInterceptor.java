@@ -1,6 +1,5 @@
 package org.example.timecoinweb.interceptor;
 
-import com.alibaba.fastjson.JSONObject;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Result;
 import org.springframework.beans.factory.annotation.Value;
@@ -75,7 +74,7 @@ public class RedisRateLimitInterceptor implements HandlerInterceptor {
     private boolean reject(HttpServletResponse response, int code, String message, long retrySeconds) throws Exception {
         response.setStatus(code); response.setHeader("Retry-After", Long.toString(retrySeconds));
         response.setContentType("application/json;charset=UTF-8");
-        response.getWriter().write(JSONObject.toJSONString(Result.error(message)));
+        response.getWriter().write(org.example.timecoinweb.util.JsonResponses.error(message));
         return false;
     }
 }

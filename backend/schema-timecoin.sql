@@ -27,7 +27,11 @@ CREATE TABLE user (
   create_time DATETIME DEFAULT NULL,
   update_time DATETIME DEFAULT NULL,
   image VARCHAR(512) DEFAULT NULL,
-  status SMALLINT NOT NULL DEFAULT 1 COMMENT '1正常 0冻结'
+  status SMALLINT NOT NULL DEFAULT 1 COMMENT '1正常 0冻结',
+  token_version INT NOT NULL DEFAULT 0 COMMENT 'N1 令牌版本，登出/改密/冻结递增',
+  failed_attempts INT NOT NULL DEFAULT 0 COMMENT 'N2 连续登录失败次数',
+  locked_until DATETIME DEFAULT NULL COMMENT 'N2 账户锁定截止时间',
+  must_change_password SMALLINT NOT NULL DEFAULT 0 COMMENT 'N2 1 表示首次登录须改密'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE old (

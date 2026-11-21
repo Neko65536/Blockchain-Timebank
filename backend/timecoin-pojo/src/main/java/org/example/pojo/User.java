@@ -38,4 +38,13 @@ public class User {
     private String agreementVersion;
     /** 注册传输字段（不落 user 表）：是否同意协议。 */
     private Boolean agreed;
+
+    /** N1：令牌版本；登出/改密/冻结时递增，旧 token 立即失效。 */
+    private Integer tokenVersion;
+    /** N2：连续登录失败次数。 */
+    private Integer failedAttempts;
+    /** N2：账户锁定截止时间（字符串由查询层转换）。 */
+    private java.time.LocalDateTime lockedUntil;
+    /** N2：1 表示管理员首次登录须改密。 */
+    private Short mustChangePassword;
 }

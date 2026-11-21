@@ -15,8 +15,8 @@ public class BlockchainProperties {
     /** 为 false 时不连接节点，链相关接口返回明确提示 */
     private boolean enabled = false;
 
-    /** ethereum保留历史凭据恢复；fisco使用独立签名进程。 */
-    private String backend = "ethereum";
+    /** N7：默认联盟链；ethereum 保留历史凭据恢复，仅 dev 显式启用。 */
+    private String backend = "fisco";
     private String fiscoConfig = "";
     private String groupId = "group0";
     private String expectedChainId = "chain0";
@@ -95,6 +95,12 @@ public class BlockchainProperties {
 
     /** 应用启动后是否执行一次全量对账（用于初始化余额镜像） */
     private boolean reconcileOnStartup = true;
+
+    /** N5：是否启用链上事件离线索引同步 */
+    private boolean eventIndexEnabled = true;
+
+    /** N6：卡单巡检阈值（分钟），超过该时长仍 PREPARED/PROCESSING 即告警 */
+    private long stuckAlertMinutes = 30;
 
     /** 同步确认最多轮询60次，超时保留原交易凭据，不能当作执行失败。 */
     private int receiptAttempts = 60;

@@ -18,6 +18,10 @@ public class RegisterController {
     @Autowired
     private org.example.timecoinweb.service.AgreementService agreementService;
 
+    /** N3：是否强制注册同意当前协议；dev 默认关闭以兼容历史调用，生产开启。 */
+    @org.springframework.beans.factory.annotation.Value("${app.agreement.required:false}")
+    private boolean agreementRequired;
+
     /**
      * 注册
      * @return
@@ -27,7 +31,10 @@ public class RegisterController {
         if (user.getRole() == null || (user.getRole() != 1 && user.getRole() != 2)) {
             return Result.error("公开注册仅支持老人和志愿者；管理员账号须由现有管理员创建");
         }
-        // 显式同意协议时版本必须与当前生效版本一致；未声明同意则保持旧注册行为（不记录同意）。
+        // N3：生产强制同意当前版本；dev 默认宽松，显式同意时仍校验版本一致性。
+        if (agreementRequired && !Boolean.TRUE.equals(user.getAgreed())) {
+            return Result.error("请先阅读并同意用户协议");
+        }
         if (Boolean.TRUE.equals(user.getAgreed())) {
             try {
                 if (!agreementService.current().get("version").equals(user.getAgreementVersion()))

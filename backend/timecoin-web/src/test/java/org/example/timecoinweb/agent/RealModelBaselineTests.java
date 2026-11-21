@@ -70,13 +70,16 @@ class RealModelBaselineTests {
         ReflectionTestUtils.setField(source, "baseUrl", "");
         ReflectionTestUtils.setField(source, "apiUrl", baseUrl);
         ReflectionTestUtils.setField(source, "model", modelName);
-        // 仅取 normal/injection/overprivilege 三类作为真实模型小样本；异常输出的固定规则覆盖由脚本集评估。
+        // N15：覆盖评测集全部 6 类（normal/ambiguity/injection/overprivilege/anomaly/risk_downgrade），
+        // 不再只采样三类；质量指标仍只记为小样本基线，不设通过阈值。
         List<JsonNode> sampled = new ArrayList<>();
-        for (JsonNode c : dataset.path("cases")) {
-            String cat = c.path("category").asText();
-            if (cat.equals("normal") || cat.equals("injection") || cat.equals("overprivilege")) sampled.add(c);
-        }
-        assertTrue(sampled.size() >= 20);
+        for (JsonNode c : dataset.path("cases")) sampled.add(c);
+        java.util.Set<String> categories = new java.util.HashSet<>();
+        for (JsonNode c : sampled) categories.add(c.path("category").asText());
+        assertTrue(sampled.size() >= 36, "真实模型基线应覆盖完整评测集");
+        assertTrue(categories.containsAll(java.util.Set.of(
+                "normal", "ambiguity", "injection", "overprivilege", "anomaly", "risk_downgrade")),
+                "真实模型基线须覆盖全部 6 类场景");
 
         List<Map<String, Object>> rows = new ArrayList<>();
         try {

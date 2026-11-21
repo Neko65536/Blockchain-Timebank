@@ -32,6 +32,18 @@ public class RegisterServiceImpl implements RegisterService{
     private PasswordService passwordService;
     @Autowired
     private org.example.timecoinweb.service.AgreementService agreementService;
+    @Autowired
+    private org.example.timecoinweb.mapper.UserMapper userMapper;
+
+    /** N2：登录失败锁定开关，dev 默认关闭以免干扰回归测试，生产开启。 */
+    @org.springframework.beans.factory.annotation.Value("${app.auth.login-lock-enabled:false}")
+    private boolean loginLockEnabled;
+    /** N2：连续失败阈值 */
+    @org.springframework.beans.factory.annotation.Value("${app.auth.max-failed-attempts:5}")
+    private int maxFailedAttempts;
+    /** N2：锁定时长（分钟） */
+    @org.springframework.beans.factory.annotation.Value("${app.auth.lock-minutes:15}")
+    private int lockMinutes;
 
 
     @Transactional
@@ -85,12 +97,26 @@ public class RegisterServiceImpl implements RegisterService{
             return null;
         }
         User storedUser = registerMapper.getByUsername(user.getUsername());
-        if (storedUser == null || !passwordService.matches(user.getPassword(), storedUser.getPassword())) {
+        // 用户名不存在时也做一次伪校验，避免响应时间差泄露用户名
+        boolean passwordOk = storedUser != null && passwordService.matches(user.getPassword(), storedUser.getPassword());
+        if (!passwordOk) {
+            if (storedUser != null && loginLockEnabled) recordFailure(storedUser);
             return null;
         }
         // J4：冻结账号禁止登录
         if (storedUser.getStatus() != null && storedUser.getStatus() == 0) {
             return null;
+        }
+        // N2：账户锁定期内禁止登录（含密码正确的情况）
+        if (loginLockEnabled && storedUser.getLockedUntil() != null
+                && storedUser.getLockedUntil().isAfter(LocalDateTime.now())) {
+            return null;
+        }
+        // 登录成功后清零失败计数（首登强制改密标志由改密接口单独清除）
+        if (loginLockEnabled) {
+            userMapper.clearLoginFailureAndForceFlag(storedUser.getId());
+            storedUser.setFailedAttempts(0);
+            storedUser.setLockedUntil(null);
         }
         if (passwordService.needsUpgrade(storedUser.getPassword())) {
             String encodedPassword = passwordService.encode(user.getPassword());
@@ -98,6 +124,24 @@ public class RegisterServiceImpl implements RegisterService{
             storedUser.setPassword(encodedPassword);
         }
         return storedUser;
+    }
+
+    /** N2：失败计数达阈值后锁定账户；锁定期间连续失败延长时长。 */
+    private void recordFailure(User user) {
+        int prev = user.getFailedAttempts() == null ? 0 : user.getFailedAttempts();
+        int next = prev + 1;
+        LocalDateTime lockUntil = null;
+        if (next >= maxFailedAttempts) {
+            lockUntil = LocalDateTime.now().plusMinutes(lockMinutes);
+        }
+        userMapper.updateLoginFailure(user.getId(), next, lockUntil);
+        user.setFailedAttempts(next);
+        user.setLockedUntil(lockUntil);
+    }
+
+    @Override
+    public void updatePassword(Integer id, String encodedPassword) {
+        registerMapper.updatePasswordById(id, encodedPassword);
     }
 
     @Override

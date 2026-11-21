@@ -29,6 +29,8 @@ public class UserController {
     UserService userService;
     @Autowired
     ActivityService activityService;
+    @Autowired
+    org.example.timecoinweb.service.BatchRewardService batchRewardService;
 
     /**
      * 将用户（老人）自己的所有活动展现出来
@@ -268,6 +270,22 @@ public class UserController {
         log.info("老人批量答谢志愿者，活动 id={}，userId={}", activity.getId(), userId);
         Map<String, Object> summary = userService.batchCompleteVolunteers(userId, activity.getId());
         return Result.success(summary);
+    }
+
+    /** N4：异步批量答谢——立即返回 jobId，前端按 jobId 轮询进度，避免 180s 超时。 */
+    @PostMapping("/old/status/batch/async")
+    public Result batchAsync(@RequestBody Activity activity, @RequestHeader("token") String token) {
+        if (activity == null || activity.getId() == null) return Result.error("活动 ID 不能为空");
+        Integer userId = (Integer) JwtUtils.parseJWT(token).get("id");
+        String jobId = batchRewardService.submit(userId, activity.getId());
+        return Result.success(Map.of("jobId", jobId));
+    }
+
+    /** N4：异步批量答谢进度（仅作业 owner 可见）。 */
+    @GetMapping("/old/status/batch/{jobId}/progress")
+    public Result batchProgress(@PathVariable String jobId, @RequestHeader("token") String token) {
+        Integer userId = (Integer) JwtUtils.parseJWT(token).get("id");
+        return Result.success(batchRewardService.progress(userId, jobId));
     }
 
     /**

@@ -117,6 +117,12 @@ ALTER TABLE `user` ADD COLUMN IF NOT EXISTS coin_balance BIGINT NOT NULL DEFAULT
 ALTER TABLE `user` ADD COLUMN IF NOT EXISTS balance_sync_time TIMESTAMP NULL;
 -- J4：用户冻结状态，1 正常 / 0 冻结；冻结用户被登录拦截器拒绝
 ALTER TABLE `user` ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 1;
+-- N1：令牌版本，登出/改密/冻结时递增，使已签发 token 立即失效
+ALTER TABLE `user` ADD COLUMN IF NOT EXISTS token_version INT NOT NULL DEFAULT 0;
+-- N2：登录失败锁定 + 管理员首登强制改密
+ALTER TABLE `user` ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE `user` ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP NULL;
+ALTER TABLE `user` ADD COLUMN IF NOT EXISTS must_change_password SMALLINT NOT NULL DEFAULT 0;
 -- J10：余额不为负的 DB 兜底约束
 ALTER TABLE `user` ADD CONSTRAINT IF NOT EXISTS ck_user_balance CHECK (coin_balance >= 0);
 

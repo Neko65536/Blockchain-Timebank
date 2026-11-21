@@ -52,6 +52,70 @@ INSERT INTO agreement_version(version,title,content_hash,active)
         '0x0000000000000000000000000000000000000000000000000000000000000001',1
  WHERE NOT EXISTS (SELECT 1 FROM agreement_version WHERE version='v1');
 
+-- N5 链上事件离线索引：后台增量同步，用户查询只读索引，避免 eth_getLogs 创世扫描打穿节点。
+CREATE TABLE IF NOT EXISTS chain_event_index (
+ tx_hash VARCHAR(66) NOT NULL,
+ log_index VARCHAR(32) NOT NULL DEFAULT '0',
+ event_type VARCHAR(16) NOT NULL,
+ block_number VARCHAR(32),
+ event_time VARCHAR(32),
+ amount VARCHAR(64),
+ parties VARCHAR(255),
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY (tx_hash,log_index)
+);
+CREATE TABLE IF NOT EXISTS chain_event_cursor (
+ backend VARCHAR(16) PRIMARY KEY,
+ last_block VARCHAR(32) NOT NULL DEFAULT '0',
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO chain_event_cursor(backend,last_block) SELECT 'ethereum','0'
+ WHERE NOT EXISTS (SELECT 1 FROM chain_event_cursor WHERE backend='ethereum');
+INSERT INTO chain_event_cursor(backend,last_block) SELECT 'fisco','0'
+ WHERE NOT EXISTS (SELECT 1 FROM chain_event_cursor WHERE backend='fisco');
+
+-- N4 批量答谢异步作业：API 只创建作业并返回 jobId，后台逐笔结算，前端轮询进度避免 180s 超时。
+CREATE TABLE IF NOT EXISTS batch_reward_job (
+ job_id VARCHAR(36) PRIMARY KEY,
+ owner_id INT NOT NULL,
+ activity_id INT NOT NULL,
+ state VARCHAR(16) NOT NULL,
+ total INT NOT NULL DEFAULT 0,
+ done INT NOT NULL DEFAULT 0,
+ failed INT NOT NULL DEFAULT 0,
+ result_json TEXT,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ finished_at TIMESTAMP NULL,
+ INDEX ix_batch_job_owner(owner_id,created_at)
+);
+
+-- N6 运维告警：卡单巡检/对账不一致落表，供人工工单消费；同一 (kind,ref) 未恢复只保留一条。
+CREATE TABLE IF NOT EXISTS ops_alert (
+ id VARCHAR(36) PRIMARY KEY,
+ kind VARCHAR(32) NOT NULL,
+ ref VARCHAR(128) NOT NULL,
+ severity VARCHAR(16) NOT NULL,
+ detail TEXT,
+ resolved SMALLINT NOT NULL DEFAULT 0,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ resolved_at TIMESTAMP NULL,
+ UNIQUE (kind,ref)
+);
+
+-- N1 刷新令牌：只存 SHA-256 哈希，不存明文；轮换时旧 token 标记 used，重放即视为盗用。
+CREATE TABLE IF NOT EXISTS refresh_token (
+ id VARCHAR(36) PRIMARY KEY,
+ user_id INT NOT NULL,
+ token_hash VARCHAR(64) NOT NULL,
+ family_id VARCHAR(36) NOT NULL,
+ used SMALLINT NOT NULL DEFAULT 0,
+ revoked SMALLINT NOT NULL DEFAULT 0,
+ expires_at TIMESTAMP NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX ix_refresh_user(user_id),
+ INDEX ix_refresh_family(family_id)
+);
+
 -- 结算答谢 Agent 的只读预检提案：模型只生成草案，真实答谢在人工确认层执行。
 CREATE TABLE IF NOT EXISTS agent_settlement (
  id VARCHAR(36) PRIMARY KEY,

@@ -27,7 +27,8 @@ class GovernanceTests {
         DriverManagerDataSource source=new DriverManagerDataSource("jdbc:h2:mem:gov"+UUID.randomUUID()+";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1","sa","");
         new ResourceDatabasePopulator(new ClassPathResource("schema-h2.sql"),new ClassPathResource("schema-chain-submission.sql"),new ClassPathResource("schema-settlement.sql")).execute(source);
         jdbc=new JdbcTemplate(source);jdbc.update("insert into `user`(id,username,password,role) values(8001,'gov-admin','test',3),(8002,'gov-target','test',1)");
-        BlockchainProperties props=new BlockchainProperties();props.setGovernanceEnabled(true);props.setContractAddress("0x"+"12".repeat(20));
+        // N7 后后端默认 fisco；本测试以以太坊 mock 链验证秒级 deadline 语义，显式声明 backend。
+        BlockchainProperties props=new BlockchainProperties();props.setBackend("ethereum");props.setGovernanceEnabled(true);props.setContractAddress("0x"+"12".repeat(20));
         IssuanceTestSupport.configure(props);
         chain=mock(TimeCoinChainService.class);when(chain.isChainReady()).thenReturn(true);
         try {when(chain.callView(any())).thenAnswer(call->{Function f=call.getArgument(0);

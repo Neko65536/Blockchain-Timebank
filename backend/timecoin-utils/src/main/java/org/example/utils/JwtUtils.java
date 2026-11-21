@@ -4,12 +4,20 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class JwtUtils {
 
     private static volatile byte[] signKey;
-    private static Long expire = 43200000L;
+    private static volatile long expire = 43200000L;
+
+    /** N1：JWT 有效期可配置（毫秒），供生产缩短 access token 寿命。 */
+    public static void configureExpire(long expireMs) {
+        if (expireMs <= 0) throw new IllegalArgumentException("JWT 有效期必须为正数");
+        expire = expireMs;
+    }
 
     public static void configureSecret(String secret) {
         if (secret == null || secret.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < 32) {
@@ -24,29 +32,40 @@ public class JwtUtils {
     }
 
     /**
-     * 生成JWT令牌
-     * @param claims JWT第二部分负载 payload 中存储的内容
-     * @return
+     * 生成 JWT 令牌。N1：自动注入 jti（令牌唯一标识）与 tv（令牌版本），
+     * 供拦截器校验令牌是否已被登出/改密/冻结撤销。
+     *
+     * @param claims JWT 负载中存储的内容
+     * @return JWT 字符串
      */
     public static String generateJwt(Map<String, Object> claims){
-        String jwt = Jwts.builder()
-                .addClaims(claims)
+        Map<String, Object> full = new HashMap<>(claims);
+        if (!full.containsKey("jti")) full.put("jti", UUID.randomUUID().toString());
+        // tv 由调用方显式传入；未传时默认 0（兼容历史调用与测试 token）
+        full.putIfAbsent("tv", 0);
+        return Jwts.builder()
+                .addClaims(full)
                 .signWith(SignatureAlgorithm.HS256, signingKey())
                 .setExpiration(new Date(System.currentTimeMillis() + expire))
                 .compact();
-        return jwt;
+    }
+
+    /** N1：签发带指定令牌版本的 access token。 */
+    public static String generateJwt(Map<String, Object> claims, int tokenVersion){
+        Map<String, Object> full = new HashMap<>(claims);
+        full.put("tv", tokenVersion);
+        return generateJwt(full);
     }
 
     /**
-     * 解析JWT令牌
+     * 解析 JWT 令牌
      * @param jwt JWT令牌
-     * @return JWT第二部分负载 payload 中存储的内容
+     * @return JWT 第二部分负载 payload 中存储的内容
      */
     public static Claims parseJWT(String jwt){
-        Claims claims = Jwts.parser()
+        return Jwts.parser()
                 .setSigningKey(signingKey())
                 .parseClaimsJws(jwt)
                 .getBody();
-        return claims;
     }
 }

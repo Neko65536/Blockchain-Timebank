@@ -14,4 +14,7 @@ public interface RegisterService {
      * @return
      */
     User selectSelf(Integer id);
+
+    /** N2：修改密码（已由调用方做强度与旧密码校验）。 */
+    void updatePassword(Integer id, String encodedPassword);
 }

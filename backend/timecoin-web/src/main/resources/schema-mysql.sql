@@ -182,6 +182,24 @@ PREPARE stmt FROM @ddl;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- N1/N2：令牌版本（登出/改密/冻结递增）+ 登录失败锁定 + 首登强制改密
+SET @ddl = IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user' AND COLUMN_NAME='token_version'),
+  'SELECT 1', 'ALTER TABLE `user` ADD COLUMN token_version INT NOT NULL DEFAULT 0');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user' AND COLUMN_NAME='failed_attempts'),
+  'SELECT 1', 'ALTER TABLE `user` ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user' AND COLUMN_NAME='locked_until'),
+  'SELECT 1', 'ALTER TABLE `user` ADD COLUMN locked_until DATETIME NULL');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user' AND COLUMN_NAME='must_change_password'),
+  'SELECT 1', 'ALTER TABLE `user` ADD COLUMN must_change_password SMALLINT NOT NULL DEFAULT 0');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS chain_account_mirror (
   account_id VARCHAR(64) NOT NULL PRIMARY KEY,
   coin_balance BIGINT NOT NULL DEFAULT 0,

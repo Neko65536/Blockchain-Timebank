@@ -64,4 +64,29 @@ public class AgreementService {
         Integer n = jdbc.queryForObject("select count(*) from user_agreement_accept where user_id=? and version=? and accepted=1", Integer.class, userId, version);
         return n != null && n > 0;
     }
+
+    /** N3：管理员发布新版本——同事务内停用旧版本并插入新版本（含内容哈希）。 */
+    @org.springframework.transaction.annotation.Transactional
+    public void publish(String version, String title, String contentHash) {
+        if (version == null || version.isBlank() || title == null || title.isBlank()
+                || contentHash == null || !contentHash.startsWith("0x")) {
+            throw new IllegalArgumentException("版本号/标题/内容哈希不合法");
+        }
+        jdbc.update("update agreement_version set active=0 where version<>?", version);
+        Integer exists = jdbc.queryForObject("select count(*) from agreement_version where version=?", Integer.class, version);
+        if (exists != null && exists > 0) {
+            jdbc.update("update agreement_version set title=?,content_hash=?,active=1,effective_at=now() where version=?",
+                    title, contentHash, version);
+        } else {
+            jdbc.update("insert into agreement_version(version,title,content_hash,active) values(?,?,?,1)",
+                    version, title, contentHash);
+        }
+    }
+
+    /** N3：登录门禁——老用户是否已同意当前生效版本；未配置协议时放行（兼容旧环境）。 */
+    public boolean needsReaccept(int userId) {
+        Map<String, Object> cur;
+        try { cur = current(); } catch (IllegalStateException e) { return false; }
+        return !hasAccepted(userId, String.valueOf(cur.get("version")));
+    }
 }

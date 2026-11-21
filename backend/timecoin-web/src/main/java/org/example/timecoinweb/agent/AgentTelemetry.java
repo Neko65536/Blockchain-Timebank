@@ -40,9 +40,14 @@ final class AgentTelemetry implements Hook {
         Map<String,Object> detail=new LinkedHashMap<>(values);
         detail.put("traceId",traceId);
         String encoded=json.writeValueAsString(detail);
-        jdbc.update("insert into agent_audit(id,task_id,actor_id,tool,detail) values(?,?,?,?,?)",
-                UUID.randomUUID().toString(),traceId,actor,event,encoded);
-        log.info("agent_event={} actorId={} detail={}",event,actor,encoded);
+        org.slf4j.MDC.put("traceId",traceId);
+        try {
+            jdbc.update("insert into agent_audit(id,task_id,actor_id,tool,detail) values(?,?,?,?,?)",
+                    UUID.randomUUID().toString(),traceId,actor,event,encoded);
+            log.info("agent_event={} actorId={} detail={}",event,actor,encoded);
+        } finally {
+            org.slf4j.MDC.remove("traceId");
+        }
     }
 
     Flux<ChatResponse> observeModel(String model,Supplier<Flux<ChatResponse>> source) {

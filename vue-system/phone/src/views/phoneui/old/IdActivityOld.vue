@@ -415,38 +415,51 @@ export default {
                 type: 'warning',
             }).then(() => {
                 this.batchLoading = true;
-                request.put('/users/old/status/batch', { id: this.id }, { timeout: 180000 })
+                // N4：异步创建作业，立即返回 jobId；前端轮询进度，避免 180s 超时。
+                request.post('/users/old/status/batch/async', { id: this.id })
                     .then((response) => {
-                        if (response.code === 1 && response.data) {
-                            const d = response.data;
-                            let msg = `成功处理 ${d.successCount} 人`;
-                            if (d.acceptedCount > 0) msg += `，${d.acceptedCount} 人已受理，稍后在时间币页面查看结算结果`;
-                            if (d.skipCount > 0) msg += `，${d.skipCount} 人已完成已跳过`;
-                            if (d.failCount > 0) msg += `，${d.failCount} 人失败`;
-                            if (d.failCount > 0) {
-                                this.$message.warning(msg);
-                                const detail = (d.failures || [])
-                                    .map((f) => `${f.name || f.userId}: ${f.reason}`)
-                                    .join('；');
-                                if (detail) {
-                                    this.$alert(detail, '部分志愿者答谢失败', { type: 'warning' });
-                                }
-                            } else {
-                                this.$message.success(msg);
-                            }
-                            this.search1();
+                        if (response.code === 1 && response.data && response.data.jobId) {
+                            this.$message.info('批量答谢已提交，正在后台处理…');
+                            this.pollBatchProgress(response.data.jobId, 0);
                         } else {
-                            this.$message.error(response.msg || '批量操作失败');
+                            this.$message.error(response.msg || '批量操作提交失败');
+                            this.batchLoading = false;
                         }
                     })
                     .catch((error) => {
-                        console.error('批量答谢失败:', error);
-                        this.$message.error('未收到完整处理结果，请刷新名单核查已完成项，再恢复未完成答谢');
-                    })
-                    .finally(() => {
+                        console.error('批量答谢提交失败:', error);
+                        this.$message.error('批量答谢提交失败，请稍后重试');
                         this.batchLoading = false;
                     });
             }).catch(() => {});
+        },
+        /** N4：轮询异步批量答谢进度，完成/失败后停止并刷新名单。 */
+        pollBatchProgress(jobId, ticks) {
+            const attempt = ticks || 0;
+            request.get(`/users/old/status/batch/${jobId}/progress`)
+                .then((response) => {
+                    if (response.code === 1 && response.data) {
+                        const d = response.data;
+                        if (d.state === 'DONE') {
+                            this.batchLoading = false;
+                            const failed = Number(d.failed || 0);
+                            const msg = `批量答谢完成：成功 ${d.done || 0} 人` + (failed > 0 ? `，失败 ${failed} 人` : '');
+                            if (failed > 0) this.$message.warning(msg); else this.$message.success(msg);
+                            this.search1();
+                            return;
+                        }
+                    }
+                    if (attempt >= 60) {
+                        this.batchLoading = false;
+                        this.$message.warning('后台仍在处理，请稍后刷新名单查看结果');
+                        return;
+                    }
+                    setTimeout(() => this.pollBatchProgress(jobId, attempt + 1), 2000);
+                })
+                .catch(() => {
+                    this.batchLoading = false;
+                    this.$message.error('查询批量答谢进度失败，请刷新名单核查');
+                });
         },
         /** 后端可能返回 number / string / null */
         isVolunteerIncomplete(row) {

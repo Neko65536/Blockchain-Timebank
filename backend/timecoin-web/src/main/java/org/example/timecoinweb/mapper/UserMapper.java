@@ -53,8 +53,21 @@ public interface UserMapper {
     @Select("SELECT role AS user_role, COUNT(*) AS role_cnt FROM `user` GROUP BY role")
     List<java.util.Map<String, Object>> countUsersByRole();
 
-    @Select("select id, username, name, role, coin_balance as coinBalance, balance_sync_time as balanceSyncTime, status from `user` where id = #{userId}")
+    @Select("select id, username, name, role, coin_balance as coinBalance, balance_sync_time as balanceSyncTime, status, "
+            + "token_version as tokenVersion, failed_attempts as failedAttempts, locked_until as lockedUntil, "
+            + "must_change_password as mustChangePassword from `user` where id = #{userId}")
     User selectById(@Param("userId") Integer userId);
+
+    /** N1：递增令牌版本，使该用户此前签发的所有 access/refresh token 立即失效（登出/改密调用）。 */
+    @Update("update `user` set token_version = token_version + 1, update_time = now() where id=#{userId}")
+    int bumpTokenVersion(@Param("userId") Integer userId);
+
+    /** N2：登录失败计数与锁定（生产可配；dev 默认不启用）。 */
+    @Update("update `user` set failed_attempts=#{n}, locked_until=#{lockedUntil}, update_time=now() where id=#{userId}")
+    int updateLoginFailure(@Param("userId") Integer userId, @Param("n") int n, @Param("lockedUntil") java.time.LocalDateTime lockedUntil);
+
+    @Update("update `user` set failed_attempts=0, locked_until=null, must_change_password=0, update_time=now() where id=#{userId}")
+    int clearLoginFailureAndForceFlag(@Param("userId") Integer userId);
 
     /** J4：冻结/解冻账号；status 仅允许 1（正常）或 0（冻结） */
     @Update("update `user` set status=#{status}, update_time=now() where id=#{userId}")

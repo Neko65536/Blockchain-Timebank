@@ -1,18 +1,16 @@
 package org.example.timecoinweb.controller;
 
 import lombok.extern.slf4j.Slf4j;
-import org.example.pojo.Pair;
+import org.example.pojo.LoginTokens;
 import org.example.pojo.Result;
 import org.example.pojo.User;
 import org.example.timecoinweb.service.RegisterService;
-import org.example.utils.JwtUtils;
+import org.example.timecoinweb.service.TokenService;
+import org.example.timecoinweb.service.AgreementService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.HashMap;
-import java.util.Map;
 
 @Slf4j
 @RestController
@@ -23,6 +21,10 @@ public class LoginController {
      */
     @Autowired
     private RegisterService registerService;
+    @Autowired
+    private TokenService tokenService;
+    @Autowired
+    private AgreementService agreementService;
 
 
     @PostMapping("/login")
@@ -35,16 +37,12 @@ public class LoginController {
         // - 客户端 role 与库中角色一致（1老人 2志愿者 3管理员），或
         // - role==0：兼容移动端仅校验用户名密码、以库中角色签发令牌
         if (u != null && loginRoleMatches(user.getRole(), u.getRole())) {
-            Map<String, Object> claims = new HashMap<>();
-            claims.put("id", u.getId());
-            claims.put("role", u.getRole());
-            claims.put("username", u.getUsername());
-
-            String jwt = JwtUtils.generateJwt(claims);
-
-            Pair pair=new Pair(jwt,u.getRole());
-
-            return Result.success(pair);
+            String access = tokenService.accessToken(u);
+            String refresh = tokenService.issueRefreshToken(u.getId());
+            LoginTokens tokens = new LoginTokens(access, refresh, u.getRole(),
+                    u.getMustChangePassword() == null ? 0 : u.getMustChangePassword().intValue(),
+                    agreementService.needsReaccept(u.getId()) ? 1 : 0);
+            return Result.success(tokens);
         }
 
         //登录失败

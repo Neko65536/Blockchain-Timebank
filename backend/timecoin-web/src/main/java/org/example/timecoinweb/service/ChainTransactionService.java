@@ -79,7 +79,20 @@ public class ChainTransactionService {
             }
             BigInteger nonce = count.getTransactionCount();
             BigDecimal reserved = jdbc.queryForObject("select max(nonce_value) from chain_submission where "+routing.all("created_at")+" and scope_key=?", BigDecimal.class, scope);
-            if (reserved != null) nonce = nonce.max(reserved.toBigIntegerExact().add(BigInteger.ONE));
+            // N12：DB 保留 nonce 明显高于链上 nonce（如 Hardhat 重建后残留脏数据）时落运维告警，
+            // 下一步用 max() 追平不会写错，但需人工核查旧链域未决记录。阈值可配，默认 100。
+            if (reserved != null) {
+                BigInteger dbNonce = reserved.toBigIntegerExact();
+                if (dbNonce.subtract(count.getTransactionCount()).compareTo(BigInteger.valueOf(100)) > 0) {
+                    try {
+                        jdbc.update("insert ignore into ops_alert(id,kind,ref,severity,detail,resolved,created_at) "
+                                        + "values(?,?,?,?,?,0,CURRENT_TIMESTAMP)",
+                                java.util.UUID.randomUUID().toString(), "NONCE_GAP", scope, "WARN",
+                                "dbNonce=" + dbNonce + ",chainNonce=" + count.getTransactionCount());
+                    } catch (Exception alertFailure) { /* 告警失败不影响交易 */ }
+                }
+                nonce = nonce.max(dbNonce.add(BigInteger.ONE));
+            }
             RawTransaction raw = RawTransaction.createTransaction(nonce, DefaultGasProvider.GAS_PRICE,
                     DefaultGasProvider.GAS_LIMIT, properties.getContractAddress(), BigInteger.ZERO, data);
             String signed = Numeric.toHexString(TransactionEncoder.signMessage(raw, chainId, signer));
