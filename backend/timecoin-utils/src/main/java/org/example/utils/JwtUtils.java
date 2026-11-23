@@ -2,15 +2,22 @@ package org.example.utils;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * JWT 工具（jjwt 0.12.x API）。
+ * 密钥通过 {@link #configureSecret(String)} 转换为 {@link SecretKey}，签名固定 HS256。
+ */
 public class JwtUtils {
 
-    private static volatile byte[] signKey;
+    private static volatile SecretKey signKey;
     private static volatile long expire = 43200000L;
 
     /** N1：JWT 有效期可配置（毫秒），供生产缩短 access token 寿命。 */
@@ -20,13 +27,13 @@ public class JwtUtils {
     }
 
     public static void configureSecret(String secret) {
-        if (secret == null || secret.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < 32) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
             throw new IllegalArgumentException("JWT_SECRET必须配置为至少32字节的随机密钥");
         }
-        signKey = secret.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        signKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static byte[] signingKey() {
+    private static SecretKey signingKey() {
         if (signKey == null) throw new IllegalStateException("JWT密钥尚未配置");
         return signKey;
     }
@@ -44,9 +51,9 @@ public class JwtUtils {
         // tv 由调用方显式传入；未传时默认 0（兼容历史调用与测试 token）
         full.putIfAbsent("tv", 0);
         return Jwts.builder()
-                .addClaims(full)
-                .signWith(SignatureAlgorithm.HS256, signingKey())
-                .setExpiration(new Date(System.currentTimeMillis() + expire))
+                .claims(full)
+                .signWith(signingKey(), Jwts.SIG.HS256)
+                .expiration(new Date(System.currentTimeMillis() + expire))
                 .compact();
     }
 
@@ -64,8 +71,9 @@ public class JwtUtils {
      */
     public static Claims parseJWT(String jwt){
         return Jwts.parser()
-                .setSigningKey(signingKey())
-                .parseClaimsJws(jwt)
-                .getBody();
+                .verifyWith(signingKey())
+                .build()
+                .parseSignedClaims(jwt)
+                .getPayload();
     }
 }

@@ -191,6 +191,7 @@
 
 <script>
 import request from '@/utils/request';
+import { isBatchDone, shouldStopPolling, buildDoneMessage } from '@/utils/batchProgress';
 
 export default {
     name: 'IdActivityOld',
@@ -440,16 +441,15 @@ export default {
                 .then((response) => {
                     if (response.code === 1 && response.data) {
                         const d = response.data;
-                        if (d.state === 'DONE') {
+                        if (isBatchDone(d.state)) {
                             this.batchLoading = false;
-                            const failed = Number(d.failed || 0);
-                            const msg = `批量答谢完成：成功 ${d.done || 0} 人` + (failed > 0 ? `，失败 ${failed} 人` : '');
-                            if (failed > 0) this.$message.warning(msg); else this.$message.success(msg);
+                            const { message, hasFailure } = buildDoneMessage(d.done, d.failed);
+                            if (hasFailure) this.$message.warning(message); else this.$message.success(message);
                             this.search1();
                             return;
                         }
                     }
-                    if (attempt >= 60) {
+                    if (shouldStopPolling(attempt)) {
                         this.batchLoading = false;
                         this.$message.warning('后台仍在处理，请稍后刷新名单查看结果');
                         return;
