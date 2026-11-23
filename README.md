@@ -4,7 +4,7 @@ Java 后端项目，主线是**异步结算可靠性**：以 Outbox + 幂等 + �
 
 **技术栈**：JDK 21、Spring Boot 4.0.9、Spring Framework 7.0.10、MyBatis starter 4.0.0、ShardingSphere-JDBC 5.5.2、AgentScope Java 2.0.5、OkHttp 5.3.2、Redis、RabbitMQ、MySQL 8、Vue 2、Hardhat / Solidity、FISCO BCOS 3.8。enforcer 强制 JDK 21，低版本无法编译。
 
-> 说明：本文只描述**当前状态**。历史版本的改造记录、测试日志名与提交号不再保留；压测数据为升级前环境实测，见第八节口径说明。
+> 说明：本文只描述**当前状态**。历史版本的改造记录、测试日志名与提交号不再保留。
 
 ---
 
@@ -252,17 +252,17 @@ J1集中验证：后端`package`含真实MySQL月分片、Redis、RabbitMQ和FIS
 
 ## 八、性能数据（口径）
 
-`GET /dashboard/notices?limit=10` 的小数据公告缓存读取压测（16 并发、60 秒、keep-alive，Python 并发客户端，对齐旧 JMeter 口径）：
+`GET /dashboard/notices?limit=10` 的小数据公告缓存读取压测（16 并发、60 秒、keep-alive）：
 
-| 指标 | 实测值（Boot 4.0.9 / JDK 21） | 升级前（Boot 2.6 / JDK 11） |
-|------|--------|--------|
-| 样本数 / 错误数 | 294913 / 30 | 257414 / 30 |
-| 吞吐 | **4914.91 请求/秒** | 4296.97 请求/秒 |
-| 平均 / P95 / P99 | 3.23ms / 6.05ms / 8.24ms | 3.48ms / 7ms / 11ms |
-| 错误率 | 0.010172%（30 次均为 503 缓存重建锁忙） | 0.011654% |
-| 首次查询缓存命中率 | 99.9888% | 99.987569% |
+| 指标 | 实测值 |
+|------|--------|
+| 样本数 / 错误数 | 294913 / 30 |
+| 吞吐 | 4914.91 请求/秒 |
+| 平均 / P95 / P99 | 3.23ms / 6.05ms / 8.24ms |
+| 错误率 | 0.010172%（30 次均为 503 缓存重建锁忙） |
+| 首次查询缓存命中率 | 99.9888% |
 
-**口径限制**：当前数据为 Java 21 / Spring Boot 4.0.9 本机实测（MySQL 8 + Redis，后端完整 profile）；升级前数据为 Java 11 / Boot 2.6 历史实测。二者均为小数据公告缓存读取，不能外推为结算 TPS、链吞吐、模型 QPS 或生产 SLA。缓存重建时当前策略明确拒绝并发读（产生 503），无"优化前"对照组，不声称提升倍数。场景文件 `performance/notices.jmx`（JMeter，历史口径）与 `performance/bench-notices.py`（Python 并发客户端，当前口径），原始采样 `performance/results/`（`notices-16-boot4.json` / `notices-16-cache-boot4.json`）。
+**口径限制**：Java 21 / Spring Boot 4.0.9 本机实测（MySQL 8 + Redis，后端完整 profile）。仅适用于小数据公告缓存读取，不能外推为结算 TPS、链吞吐、模型 QPS 或生产 SLA。缓存重建时当前策略明确拒绝并发读（产生 503），无"优化前"对照组，不声称提升倍数。压测脚本 `performance/bench-notices.py`，原始采样 `performance/results/`。
 
 ---
 
