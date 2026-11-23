@@ -1,0 +1,9 @@
+{
+  "requests": 294916,
+  "hits": 294883,
+  "misses": 33,
+  "rebuilds": 3,
+  "lockBusy": 30,
+  "fallbacks": 0,
+  "firstLookupHitPercent": 99.9888
+}

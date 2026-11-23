@@ -1,0 +1,15 @@
+{
+  "transaction": "GET dashboard notices",
+  "sampleCount": 294913,
+  "errorCount": 30,
+  "errorPct": 0.010172,
+  "meanResTime": 3.23,
+  "medianResTime": 2.95,
+  "p95ResTime": 6.05,
+  "p99ResTime": 8.24,
+  "minResTime": 0.53,
+  "maxResTime": 136.96,
+  "throughput": 4914.91,
+  "durationSec": 60,
+  "env": "Java 21 / Spring Boot 4.0.9 / JDK21, 16 并发, 60 秒, keep-alive"
+}
