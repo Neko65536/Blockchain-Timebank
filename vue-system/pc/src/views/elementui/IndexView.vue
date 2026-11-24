@@ -3,7 +3,7 @@
     <el-header class="first-header">
       <div class="header-left">
         <span class="header-logo"></span>
-        <span style=" font-size: 20px; font-weight: bold;">SYSTEM</span>
+        <span class="header-title">时光颐养 · 时间银行</span>
       </div>
       <div class="header-right">
         <el-dropdown>
@@ -294,24 +294,37 @@ export default {
   width: 200px;
 }
 .header-logo {
-  background-image: url('@/assets/myResource/system.jpg'); /* 替换为图像路径 */
-  background-size: contain; /* 控制图像大小，可以使用 cover、contain 或具体的尺寸值 */
-  background-repeat: no-repeat; /* 防止图像重复 */
-  display: inline-block; /* 设置为内联块元素，以便可以设置宽度和高度 */
-  width: 50px;
-  height: 50px;
+  background-image: url('@/assets/myResource/system.jpg');
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
 }
-.indexContainer{
-  background-image: url("@/assets/myResource/indexbackground5.jpg");
-  height: 100%;
+.header-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  margin-left: 12px;
+}
+.indexContainer {
+  height: 100vh;
+  background: #f0f2f5;
+  display: flex;
+  flex-direction: column;
 
-  .first-header{
-    background-color: #006FBE;
-    color: white;
+  .first-header {
+    background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+    color: #fff;
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 0 20px;
+    height: 60px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 
     .header-left {
       display: flex;
@@ -321,78 +334,81 @@ export default {
       display: flex;
       align-items: center;
       .avatar1 {
-          display: inline-block;
-          width: 40px;
-          height: 40px;
-          border-radius: 12px;
-          background-color: #d9d9d9;
-          line-height: 48px;
-          text-align: center;
+        display: inline-block;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background-color: #d9d9d9;
+        object-fit: cover;
       }
       .username1 {
-          display: inline-block;
-          width: 40px;
-          height: 40px;
-          text-align: center;
-          line-height: 40px;
-          border-radius: 50%;
-          background: #04c9be;
-          color: #fff;
-          margin-right: 4px;
+        display: inline-block;
+        width: 36px;
+        height: 36px;
+        text-align: center;
+        line-height: 36px;
+        border-radius: 50%;
+        background: #10b981;
+        color: #fff;
+        margin-right: 4px;
       }
       .el-dropdown-link {
         display: flex;
         align-items: center;
         cursor: pointer;
-        color: white;
+        color: #fff;
       }
     }
   }
-  .boxContainer{
-    display: flex; /* 使用 Flexbox 实现水平布局 */
-    height: 835px; 
-    
-    .aside{
-      margin: 5px;
-      backdrop-filter: blur(10px);
-      border-radius: 20px;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
-      
-      .el-menu-vertical-demo{
-        backdrop-filter: blur(40px); /* 添加毛玻璃效果 */
-        border-radius: 20px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2); /* 添加阴影效果 */
-        background-color: rgba(255, 255, 255, 0.4);
+  .boxContainer {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
 
-        .RouterLink{
-          color: black;
-          text-decoration: none; /* 移除下划线 */
+    .aside {
+      margin: 12px 0 12px 12px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+      flex-shrink: 0;
+
+      .el-menu-vertical-demo {
+        border-right: none;
+        border-radius: 12px;
+        background: #fff;
+
+        .RouterLink {
+          color: #333;
+          text-decoration: none;
         }
       }
     }
-    
-    .right{
-      display: flex; /* 使用 Flexbox 实现垂直布局 */
-      flex-direction: column; /* 子元素在容器中垂直排列 */
-      
-      .second-header{
-        display: flex; /* 使用 Flexbox 实现水平布局 */
-        align-items: center; //垂直居中
-        margin: 5px;
-        border: 1px solid #ccc; /* 设置边框为 1px 实线 */
-        backdrop-filter: blur(10px); /* 添加毛玻璃效果 */
-        border-radius: 20px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2); /* 添加阴影效果 */
-        background-color: rgba(255, 255, 255, 0.4);
+
+    .right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+
+      .second-header {
+        display: flex;
+        align-items: center;
+        margin: 12px 12px 0;
+        padding: 0 12px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+        flex-shrink: 0;
       }
-      .mainBox{
-        margin: 5px;
-        height: auto;
-        border: 1px solid #ccc;
-        backdrop-filter: blur(10px);
-        border-radius: 20px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2); /* 添加阴影效果 */
-        background-color: rgba(255, 255, 255, 0.4);
+      .mainBox {
+        flex: 1;
+        margin: 12px;
+        padding: 20px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+        overflow: auto;
       }
     }
   }

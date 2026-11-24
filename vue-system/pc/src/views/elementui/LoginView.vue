@@ -112,7 +112,7 @@ export default {
 }
 body {
     font-family: 'Montserrat',sans-serif;
-    background-image: linear-gradient(120deg,#3498db,#8e44ad);;
+    background-image: linear-gradient(120deg,#1e3c72,#2a5298);;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -236,7 +236,7 @@ a {
     top: 100%;
     width: 0%;
     height: 2px;
-    background-image: linear-gradient(120deg,#3498db,#8e44ad);
+    background-image: linear-gradient(120deg,#1e3c72,#2a5298);
     transition: .5s;
 }
 
@@ -283,7 +283,7 @@ button.ghost {
 }
 
 .form-container button {
-    background: linear-gradient(120deg, #3498db, #8e44ad);
+    background: linear-gradient(120deg, #1e3c72, #2a5298);
     border: none;
     background-size: 200%;
     color: #fff;
@@ -323,7 +323,7 @@ button.ghost {
     z-index: 100;
 }
 .overlay {
-    background-image: linear-gradient(120deg,#3498db,#8e44ad);
+    background-image: linear-gradient(120deg,#1e3c72,#2a5298);
     color: #fff;
     position: relative;
     left: -100%;
