@@ -1,3 +1,4 @@
+/* global globalThis */
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   getToken, setToken, removeToken,

@@ -22,7 +22,7 @@ jobs:
         run: mvn -B -ntp -f backend/pom.xml -pl timecoin-web -am test
 
   frontend:
-    name: Frontend (phone + pc build & lint)
+    name: Frontend (phone + pc build, lint & test)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -41,6 +41,9 @@ jobs:
       - name: Lint
         working-directory: vue-system/${{ matrix.app }}
         run: npm run lint -- --no-fix
+      - name: Unit test
+        working-directory: vue-system/${{ matrix.app }}
+        run: npm run test --if-present
       - name: Build
         working-directory: vue-system/${{ matrix.app }}
         run: npm run build
