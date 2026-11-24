@@ -41,7 +41,18 @@ public final class FiscoAdminMain {
             List<Address> approvers=new ArrayList<>();for(String address:required("GOVERNANCE_APPROVERS").split(",")) approvers.add(new Address(address.trim()));
             int threshold=Integer.parseInt(required("GOVERNANCE_THRESHOLD"));
             String domain=Hash.sha3String(client.getChainId()+":"+client.getGroup()+":"+required("GOVERNANCE_DEPLOYMENT_ID"));
-            String constructor=FunctionEncoder.encodeConstructor(List.of(new Address(operator),new Bytes32(Numeric.hexStringToByteArray(domain)),new DynamicArray<>(Address.class,approvers),new Uint256(threshold)));
+            // 发行政策必须与后端 runtime 配置一致（对齐 BLOCKCHAIN_* 环境变量）；timestampDivisor 固定 1000（FISCO EVM 时间单位为毫秒）。
+            java.math.BigInteger[] issuance=new java.math.BigInteger[]{
+                new java.math.BigInteger(required("BLOCKCHAIN_MAX_SUPPLY")),
+                new java.math.BigInteger(required("BLOCKCHAIN_LIFETIME_MINT_THRESHOLD")),
+                new java.math.BigInteger(required("BLOCKCHAIN_GLOBAL_DAILY_MINT_LIMIT")),
+                new java.math.BigInteger(required("BLOCKCHAIN_ACCOUNT_DAILY_MINT_LIMIT"))};
+            for(java.math.BigInteger limit:issuance)if(limit.signum()<=0 || limit.bitLength()>63)
+                throw new IllegalArgumentException("四个发行额度必须为正且不超过int64");
+            if(issuance[1].compareTo(issuance[0])>0 || issuance[2].compareTo(issuance[0])>0 || issuance[3].compareTo(issuance[2])>0)
+                throw new IllegalArgumentException("发行额度关系不合法");
+            String constructor=FunctionEncoder.encodeConstructor(List.of(new Address(operator),new Bytes32(Numeric.hexStringToByteArray(domain)),new DynamicArray<>(Address.class,approvers),new Uint256(threshold),
+                new StaticArray5<>(Uint256.class,List.of(new Uint256(issuance[0]),new Uint256(issuance[1]),new Uint256(issuance[2]),new Uint256(issuance[3]),new Uint256(1000)))));
             var signed=TransactionBuilderJniObj.createSignedTransaction(deployer.getJniKeyPair(),client.getGroup(),client.getChainId(),"",Numeric.cleanHexPrefix(binary)+constructor,"",client.getBlockLimit().longValueExact(),0);
             // 部署同样先保存原凭据；结果不明时依据记录查询，不能盲目重复部署。
             Path evidence=Path.of(required("FISCO_DEPLOY_RECEIPT_FILE"));
