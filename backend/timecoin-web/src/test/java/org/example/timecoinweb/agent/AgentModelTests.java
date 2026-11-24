@@ -41,4 +41,20 @@ class AgentModelTests {
             }
         } finally { server.stop(0); }
     }
+
+    @Test void outputGuardrailBlocksWriteActionAndUnimplementedFeatureHallucination() {
+        AiChatService model = new AiChatService();
+        // 写操作幻觉：模型假装已执行发布/审核/转账/冻结
+        assertNotNull(model.guardrailReplyForModelOutput("old", "已为您发布活动"));
+        assertNotNull(model.guardrailReplyForModelOutput("old", "已经帮你转账了"));
+        assertNotNull(model.guardrailReplyForModelOutput("old", "该活动已审核通过"));
+        assertNotNull(model.guardrailReplyForModelOutput("old", "账户已冻结"));
+        // 编造功能幻觉：模型编造系统未实现的短信/语音/自动审核
+        assertNotNull(model.guardrailReplyForModelOutput("old", "已发送短信通知"));
+        assertNotNull(model.guardrailReplyForModelOutput("old", "支持语音助手"));
+        assertNotNull(model.guardrailReplyForModelOutput("old", "已自动审核通过"));
+        // 正常输出不被拦截
+        assertNull(model.guardrailReplyForModelOutput("old", "发布活动的步骤是填写信息后提交管理员审核"));
+        assertNull(model.guardrailReplyForModelOutput("old", "转账前请确认收款人信息"));
+    }
 }

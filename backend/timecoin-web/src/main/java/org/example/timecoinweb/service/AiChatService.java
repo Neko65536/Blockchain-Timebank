@@ -232,6 +232,12 @@ public class AiChatService {
         if (containsUnsupportedLoginHallucination(reply)) {
             return "当前版本还没有实现微信、QQ、支付宝等外部账号登录。请使用系统内置账号登录/注册。";
         }
+        if (containsWriteActionHallucination(reply)) {
+            return "我无法直接替你执行发布、审核、转账、结算、冻结等操作，也不会声称已完成这些操作。请登录后到对应页面自行操作，或由管理员在后台处理。";
+        }
+        if (containsUnimplementedFeatureHallucination(reply)) {
+            return "当前版本暂未提供短信通知、语音、人脸识别、自动审核等功能。请以系统内实际功能为准，按 App 已有页面操作。";
+        }
         return null;
     }
 
@@ -276,6 +282,25 @@ public class AiChatService {
 
     private boolean containsUnsupportedLoginHallucination(String text) {
         return containsAny(text, "微信授权登录", "QQ授权登录", "支付宝授权登录", "第三方账号登录");
+    }
+
+    /** 输出侧护栏：识别“假装已执行写操作”的幻觉（发布/审核/转账/结算/冻结等）。 */
+    private boolean containsWriteActionHallucination(String text) {
+        return containsAny(text,
+                "已为您发布", "已帮你发布", "已经帮你", "已替你", "已经为您",
+                "已发布", "已审核通过", "已批准", "已驳回",
+                "已转账", "已打款", "已结算", "已发放", "已答谢", "已补偿",
+                "已发送通知", "已通知", "已提醒",
+                "已冻结", "已停权", "已解冻");
+    }
+
+    /** 输出侧护栏：识别“编造未实现功能”的幻觉（短信/语音/人脸识别/自动审核等）。 */
+    private boolean containsUnimplementedFeatureHallucination(String text) {
+        return containsAny(text,
+                "短信通知", "发送短信", "短信提醒", "短信验证码",
+                "语音助手", "语音播报", "语音输入",
+                "人脸识别", "实名认证",
+                "自动审核", "自动通过", "自动退款", "自动派单");
     }
 
     private boolean containsAny(String text, String... words) {
