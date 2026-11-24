@@ -210,6 +210,9 @@ public class AiChatService {
         if (isThirdPartyLoginQuestion(message)) {
             return "当前版本还没有实现微信、QQ、支付宝等外部账号登录。现在请使用系统内置账号登录/注册；如果后续要接入第三方登录，需要先完成开放平台应用申请、回调地址配置、后端换取openid/unionid和账号绑定表设计。";
         }
+        if (isWithdrawalQuestion(message)) {
+            return "时间币为社区互助的封闭记账积分，不支持提现、兑换或投资。时间币仅用于系统内记录志愿服务时长与互助激励，不能转换成现金或其他资产。";
+        }
         if (isUnsupportedFeatureQuestion(message)) {
             return "当前版本暂未实现这个功能。已实现的移动端能力包括：账号登录注册、老人发布活动、志愿者浏览和报名活动、活动签到、个人信息查看、时间币余额/转账/转账历史、老人端和志愿者端AI服务。你可以告诉我你想完成的具体操作，我会按当前App已有页面给你指引。";
         }
@@ -249,6 +252,10 @@ public class AiChatService {
         return containsAny(message, "微信登录", "qq登录", "QQ登录", "支付宝登录", "第三方登录", "外部账号登录", "openid", "unionid");
     }
 
+    private boolean isWithdrawalQuestion(String message) {
+        return containsAny(message, "提现", "兑换", "变现", "换钱", "提款");
+    }
+
     private boolean isUnsupportedFeatureQuestion(String message) {
         return containsAny(message,
                 "语音助手", "语音输入", "语音交互", "语音播报",
@@ -260,7 +267,7 @@ public class AiChatService {
                 "失信分", "信用分",
                 "流通率预警", "预警功能",
                 "自动派单", "派单",
-                "退款", "提现");
+                "退款");
     }
 
     private boolean isEmergencyQuestion(String message) {
