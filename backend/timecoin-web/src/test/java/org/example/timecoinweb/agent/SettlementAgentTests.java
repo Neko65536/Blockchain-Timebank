@@ -51,7 +51,7 @@ class SettlementAgentTests {
         chain.setBatchRewardMaxVolunteers(200);
         chain.setBatchRewardTotalCap(java.math.BigInteger.valueOf(100000));
         var audit = new PublishAgent(jdbc, json, new AgentRuntime(model, json, jdbc),
-                mock(ActivityDraftValidator.class), new DataSourceTransactionManager(ds), chain);
+                mock(ActivityDraftValidator.class), new DataSourceTransactionManager(ds), chain, null);
         agent = new SettlementAgent(jdbc, json, new AgentRuntime(model, json, jdbc), activities, olds, users,
                 vols, settlements, chain, audit, new DataSourceTransactionManager(ds));
         confirmation = new SettlementConfirmation(agent, jdbc, userService, audit, new DataSourceTransactionManager(ds));

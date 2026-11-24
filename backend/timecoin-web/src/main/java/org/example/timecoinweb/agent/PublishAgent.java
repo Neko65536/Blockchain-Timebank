@@ -4,6 +4,8 @@ import tools.jackson.databind.*;
 import lombok.RequiredArgsConstructor;
 import org.example.pojo.Activity;
 import org.example.timecoinweb.config.BlockchainProperties;
+import org.example.timecoinweb.service.UserService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,6 +26,9 @@ public class PublishAgent {
     private final ActivityDraftValidator validator;
     private final PlatformTransactionManager manager;
     private final BlockchainProperties chain;
+    private final UserService users;
+    /** 自动确认开关：开启后仅「活动发布」这类低风险操作在草稿校验通过后自动执行；发币/冻结/审核仍须人工。 */
+    @Value("${agent.auto-confirm.enabled:false}") private boolean autoConfirm;
 
     public Map<String,Object> create(int actor,String key,String text) throws Exception {
         requireElder(actor);
@@ -57,9 +62,16 @@ public class PublishAgent {
             var duplicate=jdbc.queryForList("select id,input_hash from agent_task where owner_id=? and request_key=?",actor,key);
             if(!duplicate.isEmpty()){sameInput(duplicate.get(0),hash);return get(actor,(String)duplicate.get(0).get("id"));}
             String id=runId;
-            jdbc.update("insert into agent_task(id,owner_id,request_key,input_hash,state,draft,feedback) values(?,?,?,?,?,?,?)",id,actor,key,hash,issues.isEmpty()?"READY":"NEEDS_INPUT",encode(fields),encode(issues));
-            audit(id,actor,"GENERATE_DRAFT","模型生成候选表单，未执行发布");
+            String state=issues.isEmpty()?"READY":"NEEDS_INPUT";
+            jdbc.update("insert into agent_task(id,owner_id,request_key,input_hash,state,draft,feedback) values(?,?,?,?,?,?,?)",id,actor,key,hash,state,encode(fields),encode(issues));
+            audit(id,actor,"GENERATE_DRAFT", autoConfirm && issues.isEmpty() ? "模型生成候选表单，自动确认开关开启" : "模型生成候选表单，未执行发布");
             audit(id,actor,"VALIDATE_DRAFT",encode(issues));
+            if(autoConfirm && issues.isEmpty()){
+                // 仅低风险的「活动发布」自动执行：草稿已通过确定性字段校验，复用既有发布链路（幂等 + 账户校验仍在）。
+                Object result=users.oldAddActivity(activity,actor,"agent:"+id);
+                jdbc.update("update agent_task set state='SUBMITTED',result_json=? where id=?",encode(result),id);
+                audit(id,actor,"AUTO_CONFIRM_PUBLISH","自动确认开关开启，草稿校验通过后自动发布；结果以结算状态为准");
+            }
             return get(actor,id);
         });
     }

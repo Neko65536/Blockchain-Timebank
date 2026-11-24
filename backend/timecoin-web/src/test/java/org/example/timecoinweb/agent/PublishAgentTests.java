@@ -22,7 +22,7 @@ class PublishAgentTests {
         jdbc=new JdbcTemplate(ds);jdbc.execute("create table `user`(id int primary key,role int)");jdbc.update("insert into `user` values(1,1),(2,1),(3,3)");
         var config=new BlockchainProperties();config.setEnabled(false);
         var validator=new ActivityDraftValidator(json,config);
-        agent=new PublishAgent(jdbc,json,new AgentRuntime(model,json,jdbc),validator,new DataSourceTransactionManager(ds),config);
+        agent=new PublishAgent(jdbc,json,new AgentRuntime(model,json,jdbc),validator,new DataSourceTransactionManager(ds),config,users);
         confirm=new PublishConfirmation(agent,validator,jdbc,users);
         when(model.reactModel()).thenAnswer(call -> ScriptedAgentModel.forPlan(json.readTree("{\"title\":\"陪同购物\"}")));
     }
@@ -67,5 +67,15 @@ class PublishAgentTests {
         verify(users,times(1)).oldAddActivity(any(),eq(1),eq("agent:"+id));
         assertEquals("SUBMITTED",agent.get(1,id).get("state"));
         assertThrows(Exception.class,()->agent.revise(1,id,1,draft));
+    }
+
+    @Test void autoConfirmPublishesWhenEnabledAndDraftValid() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(agent,"autoConfirm",true);
+        when(model.reactModel()).thenAnswer(call -> ScriptedAgentModel.forPlan(json.readTree(
+                "{\"title\":\"购物\",\"description\":\"陪同\",\"quota\":1,\"phone\":\"123\",\"address\":\"一号门\",\"date\":\"2099-11-20\",\"begin\":\"09:00:00\",\"end\":\"10:00:00\",\"deadline\":\"2099-11-19T18:00:00\",\"volunteerReward\":0,\"serviceType\":\"other_service\",\"extraJson\":\"{\\\"customCategory\\\":\\\"购物\\\",\\\"serviceDetails\\\":\\\"陪同\\\"}\"}")));
+        when(users.oldAddActivity(any(),eq(1),anyString())).thenReturn(Map.of("settlementId","auto","state","PENDING"));
+        var result=agent.create(1,"request-auto","买菜");
+        assertEquals("SUBMITTED",result.get("state"));
+        verify(users,times(1)).oldAddActivity(any(),eq(1),anyString());
     }
 }
