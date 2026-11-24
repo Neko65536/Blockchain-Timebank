@@ -174,7 +174,6 @@
           <el-table-column type="selection" width="45"></el-table-column>
           <el-table-column fixed prop="id" label="用户id" sortable width="100"/>
           <el-table-column prop="username" label="用户名" width="80"/>
-          <el-table-column prop="password" label="密码" width="200"/>
           <el-table-column prop="role" label="用户类型" :formatter="formatRole"/>
           <el-table-column prop="email" label="邮箱" width="200"/>
           <el-table-column prop="age" label="年龄" sortable/>

@@ -147,7 +147,10 @@ public class RegisterServiceImpl implements RegisterService{
     @Override
     public User selectSelf(Integer id) {
         User user=registerMapper.getById(id);
-
+        if (user != null) {
+            // 个人信息查询不回传密码（即使是 bcrypt 密文），避免泄露给客户端。
+            user.setPassword(null);
+        }
         return user;
     }
 }

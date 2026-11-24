@@ -53,9 +53,9 @@
         </foreach>
     </delete>
 
-    <!-- 条件查询用户-->
+    <!-- 条件查询用户（列表不返回 password 与 token/登录治理内部字段）-->
     <select id="selectUsers" resultType="org.example.pojo.User">
-        select * from `user`
+        select id, username, name, role, email, age, phone, address, image, status, create_time, update_time from `user`
         <where>
             <if test="role!=null">
                 role=#{role}
