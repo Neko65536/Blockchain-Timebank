@@ -26,6 +26,7 @@ class RagTests {
         ReflectionTestUtils.setField(embedding,"mode","local-hash");ReflectionTestUtils.setField(embedding,"url","");
         ReflectionTestUtils.setField(embedding,"model","test");ReflectionTestUtils.setField(embedding,"dimensions",512);
         knowledge=new KnowledgeService(jdbc,new DataSourceTransactionManager(ds),embedding,json);
+        ReflectionTestUtils.setField(knowledge,"mqEnabled",true);
         index=new InMemoryVectorIndex(jdbc,json);model=mock(AiChatService.class);when(model.groundingKey()).thenReturn("test");
         answers=new RagAnswerService(knowledge,embedding,index,model,json,mock(StringRedisTemplate.class));
         ReflectionTestUtils.setField(answers,"mode","extractive");ReflectionTestUtils.setField(answers,"minimum",0.2);

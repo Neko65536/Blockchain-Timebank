@@ -1,6 +1,7 @@
 package org.example.timecoinweb.rag;
 
 import tools.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -18,6 +19,8 @@ public class KnowledgeService {
     private final TransactionTemplate tx;
     private final EmbeddingService embedding;
     private final ObjectMapper json;
+    /** MQ 关闭时同步处理（本地演示无需 RabbitMQ）；开启时走 RagMessaging 异步。 */
+    @Value("${ai.rag.mq-enabled:true}") private boolean mqEnabled;
     public KnowledgeService(JdbcTemplate jdbc, PlatformTransactionManager manager, EmbeddingService embedding, ObjectMapper json) {
         this.jdbc=jdbc; this.tx=new TransactionTemplate(manager); this.embedding=embedding; this.json=json;
     }
@@ -30,7 +33,7 @@ public class KnowledgeService {
                 || content==null || content.isBlank() || content.length()>16000 || audience<0 || audience>3
                 || type==null || !Set.of("TEXT","FAQ","NOTICE").contains(type)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"知识文档参数不合法");
         String key=Hash.sha3String(requestKey), hash=Hash.sha3String(title+"\u0000"+content+"\u0000"+audience+"\u0000"+type);
-        return tx.execute(status -> {
+        String id=tx.execute(status -> {
             jdbc.queryForObject("select version_value from rag_revision where id=1 for update",Long.class);
             List<Map<String,Object>> existing=jdbc.queryForList("select id,payload_hash from rag_document where request_key=?",key);
             if (!existing.isEmpty()) {
@@ -39,12 +42,18 @@ public class KnowledgeService {
             }
             if (jdbc.queryForObject("select count(*) from rag_document where state<>'DELETED'",Integer.class)>=500)
                 throw new ResponseStatusException(HttpStatus.CONFLICT,"本地知识库最多支持500份文档");
-            String id=UUID.randomUUID().toString();
+            String docId=UUID.randomUUID().toString();
             jdbc.update("insert into rag_document(id,request_key,payload_hash,title,content,audience,source_type,embedding_key,state) values(?,?,?,?,?,?,?,?,'PENDING')",
-                    id,key,hash,title.trim(),content,audience,type,embedding.key());
-            jdbc.update("insert into rag_outbox(document_id) values(?)",id);
-            return id;
+                    docId,key,hash,title.trim(),content,audience,type,embedding.key());
+            if (mqEnabled) {
+                jdbc.update("insert into rag_outbox(document_id) values(?)",docId);
+            }
+            return docId;
         });
+        if (!mqEnabled) {
+            process(id);
+        }
+        return id;
     }
     public void disable(String id) {
         tx.executeWithoutResult(status -> {
