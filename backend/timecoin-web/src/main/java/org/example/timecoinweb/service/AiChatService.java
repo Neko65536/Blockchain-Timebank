@@ -216,6 +216,9 @@ public class AiChatService {
         if (isEmergencyQuestion(message)) {
             return "如果涉及紧急医疗、人身安全或突发危险，请优先联系家属、社区工作人员或当地应急渠道。本AI只能说明App使用方法，不能替代医疗、法律或应急处置。";
         }
+        if (isPrivilegeEscalationQuestion(message)) {
+            return "我无法以管理员或其他身份执行发布、审核、审批、代他人操作或跨范围访问等操作。请使用你自己的账号，在对应权限范围内操作；如需管理员操作请联系项目管理员。";
+        }
         return null;
     }
 
@@ -256,6 +259,15 @@ public class AiChatService {
 
     private boolean isEmergencyQuestion(String message) {
         return containsAny(message, "急救", "晕倒", "胸痛", "摔倒", "报警", "危险", "受伤", "自杀", "中毒");
+    }
+
+    private boolean isPrivilegeEscalationQuestion(String message) {
+        return containsAny(message,
+                "以管理员身份", "冒充", "冒用", "假扮",
+                "替别人", "替他人", "代别人", "代他人", "代查",
+                "换个人来审核", "换个人审核",
+                "跨批次", "不在批次内",
+                "越权", "提权", "提升权限");
     }
 
     private boolean containsHumanServiceHallucination(String text) {
