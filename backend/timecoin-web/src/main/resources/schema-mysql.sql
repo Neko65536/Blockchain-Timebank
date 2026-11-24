@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS compensation_record (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO `user` (username, name, password, role, email, age, phone, create_time, update_time)
-SELECT 'admin', '系统管理员', '123456', 3, 'admin@local', 30, '13800000000', NOW(), NOW()
+SELECT 'admin', '系统管理员', '$2a$10$tgLSIdng6XOqDRDtZADrDecMFz/NO5UleYlYx/y2bTW7J8Fyo4ClC', 3, 'admin@local', 30, '13800000000', NOW(), NOW()
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM `user` WHERE username = 'admin');
 INSERT INTO administrator (user_id)
