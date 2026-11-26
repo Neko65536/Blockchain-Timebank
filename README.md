@@ -219,7 +219,7 @@ J1集中验证：后端`package`含真实MySQL月分片、Redis、RabbitMQ和FIS
 - **Agent 遥测**：复用 `agent_audit`，以 ReAct `runId` 作为 `traceId` 串联一次流程；Hook 记录 `MODEL_CALL`（模型、轮次、耗时、供应商 token 用量，缺失标记 `usageReported=false`）、`TOOL_CALL`（成功/失败/取消/未注册）与 `REACT_COMPLETE/REACT_FAILED` 汇总。日志不记原始问题、提示词、思维过程或密钥；属应用级追踪，未接入 OpenTelemetry。
 - **RAG 评测集**：`evaluation-v1.json` 24 条标注（16 可回答 / 8 无依据，含角色隔离与领域外问题），离线跑真实入库/检索/回答；local-hash 基线引用命中 14/16、无依据召回 8/8。指标只校验引用与拒答决策，**不是**生成质量或真实语义检索准确率。
 
-- **测试与覆盖率**：后端 174 项单测通过（`mvn test` 自动产出 jacoco 报告），行覆盖率 53.9%、分支覆盖率 44.6%（全量口径，含配置类、异常类与需真实链的 signer 运维入口）。核心 AI/RAG 模块覆盖率高（agent 97%、rag 85%、interceptor 86%）；controller 层与定时任务是已知短板。前端 phone 23 + pc 15 共 38 项 Vitest 单测（含 `.vue` 组件测试：`MobileBackBar` 路由回退分支、`SettlementList` 类型映射与加载成败）。
+- **测试与覆盖率**：后端 188 项单测通过（`mvn test` 自动产出 jacoco 报告），行覆盖率 56.9%、分支覆盖率 48.1%（口径：排除启动类、纯配置类、自定义异常与 signer 运维入口）。核心 AI/RAG 模块覆盖率高（agent 97%、rag 85%、interceptor 86%）；controller 层（19%）与定时任务是已知短板。前端 phone 23 + pc 15 共 38 项 Vitest 单测（含 `.vue` 组件测试：`MobileBackBar` 路由回退分支、`SettlementList` 类型映射与加载成败）。
 
 ### 关键设计取舍
 

@@ -163,18 +163,23 @@
                         <goals><goal>prepare-agent</goal></goals>
                         <configuration>
                             <propertyName>jacocoArgLine</propertyName>
-                            <excludes>
-                                <!-- 启动类与独立运维 main 入口不计入覆盖率 -->
-                                <exclude>org/example/timecoinweb/TimecoinWebApplication.class</exclude>
-                                <exclude>org/example/timecoinweb/signer/SignerMain.class</exclude>
-                                <exclude>org/example/timecoinweb/signer/FiscoAdminMain.class</exclude>
-                            </excludes>
                         </configuration>
                     </execution>
                     <execution>
                         <id>report</id>
                         <phase>test</phase>
                         <goals><goal>report</goal></goals>
+                        <configuration>
+                            <excludes>
+                                <!-- 启动类与独立运维 main 入口不计入覆盖率 -->
+                                <exclude>org/example/timecoinweb/TimecoinWebApplication.class</exclude>
+                                <exclude>org/example/timecoinweb/signer/SignerMain.class</exclude>
+                                <exclude>org/example/timecoinweb/signer/FiscoAdminMain.class</exclude>
+                                <!-- 纯配置类与自定义异常：无业务逻辑，不计入覆盖率口径 -->
+                                <exclude>org/example/timecoinweb/config/*</exclude>
+                                <exclude>org/example/timecoinweb/exception/*</exclude>
+                            </excludes>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
